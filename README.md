@@ -8,6 +8,8 @@ A TouchDesigner Custom TOP that renders [Rive](https://rive.app) animations
 - **macOS** (arm64) — Metal backend, ships as `TDRiveTOP.plugin`
 - **Windows** (x64) — D3D11 backend, ships as `TDRiveTOP.dll`
 
+## [Download] (https://github.com/medcelerate/TDRive/release/latest)
+
 ## Layout
 
 ```
