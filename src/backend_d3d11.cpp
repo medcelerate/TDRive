@@ -15,6 +15,11 @@
 
 #include "rive/renderer/render_context.hpp"
 #include "rive/renderer/rive_renderer.hpp"
+// texture.hpp must be included before render_context_d3d_impl.hpp - the D3D
+// header instantiates rcp<rive::gpu::Texture> through RenderContextImpl, and
+// MSVC needs the full type for that. Metal's path includes it transitively;
+// MSVC's path doesn't.
+#include "rive/renderer/texture.hpp"
 #include "rive/renderer/d3d11/render_context_d3d_impl.hpp"
 
 using Microsoft::WRL::ComPtr;

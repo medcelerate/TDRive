@@ -123,7 +123,7 @@ if(APPLE)
     )
 elseif(WIN32)
     target_compile_definitions(TDRiveTOP PRIVATE
-        NOMINMAX
+        # NOMINMAX is already defined by td_sdk/CPlusPlus_Common.hpp on _WIN32.
         WIN32_LEAN_AND_MEAN
         _CRT_SECURE_NO_WARNINGS
     )
