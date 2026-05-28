@@ -86,8 +86,18 @@ jobs:
         with:
           submodules: false
 
-      - name: Install premake
-        run: choco install -y premake
+      - name: Install premake5
+        shell: pwsh
+        run: |
+          $version = "5.0.0-beta8"
+          $url = "https://github.com/premake/premake-core/releases/download/v$version/premake-$version-windows.zip"
+          $dest = "$env:RUNNER_TEMP\premake"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile "$dest\premake.zip"
+          Expand-Archive -Path "$dest\premake.zip" -DestinationPath $dest
+          # Add to PATH for subsequent steps.
+          "$dest" | Out-File -FilePath $env:GITHUB_PATH -Append
+          & "$dest\premake5.exe" --version
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1

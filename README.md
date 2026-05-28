@@ -37,7 +37,9 @@ TDRive/
 
 **Windows**
 - Visual Studio 2022 with the C++ workload (or VS Build Tools)
-- `premake5.exe` on `PATH` — `choco install premake`
+- `premake5.exe` on `PATH` — Chocolatey doesn't ship it; download the
+  Windows zip from <https://github.com/premake/premake-core/releases>,
+  extract `premake5.exe`, and put it somewhere on `PATH`.
 - CMake 3.20+ — `choco install cmake`
 - A "Developer Command Prompt for VS 2022" (or any shell with vcvars set)
 
