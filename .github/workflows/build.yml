@@ -137,7 +137,11 @@ jobs:
           # doesn't pass /m, so projects build serially - ninja is fully
           # parallel and finishes in a fraction of the time on CI.
           RIVE_BUILD_SYSTEM: "ninja"
-        run: scripts\build_rive.bat release
+        # Args after `--` are forwarded to ninja as explicit build targets,
+        # so we only build the static libs we actually link. Skipping
+        # path_fiddle (the GLFW sample exe) avoids the LNK1107 that bites
+        # otherwise - and we never use it.
+        run: scripts\build_rive.bat release -- rive rive_pls_renderer rive_decoders rive_harfbuzz rive_sheenbidi rive_yoga libpng libjpeg libwebp zlib miniaudio
 
       - name: Configure plugin
         run: cmake -B build -G "Visual Studio 17 2022" -A x64
