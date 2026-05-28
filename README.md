@@ -10,27 +10,9 @@ A TouchDesigner Custom TOP that renders [Rive](https://rive.app) animations
 
 ## [Download](https://github.com/medcelerate/TDRive/releases/latest)
 
-## Layout
 
-```
-TDRive/
-├── src/
-│   ├── TDRiveTOP.{h,cpp}         # cross-platform shell
-│   ├── IBackend.h                # backend interface
-│   ├── backend_metal.mm          # macOS Metal backend
-│   ├── backend_d3d11.cpp         # Windows D3D11 backend
-│   └── Info.plist                # macOS bundle plist
-├── td_sdk/
-│   ├── TOP_CPlusPlusBase.hpp     # TD Custom Operator SDK headers
-│   └── CPlusPlus_Common.hpp
-├── scripts/
-│   ├── build_rive.sh             # macOS Rive runtime build
-│   ├── build_rive.bat            # Windows Rive runtime build
-│   └── inspect_riv.mm            # diagnostic dumper (macOS only)
-├── third_party/
-│   └── rive-runtime/             # cloned by build_rive.{sh,bat}
-└── CMakeLists.txt                # cross-platform plugin build
-```
+https://github.com/user-attachments/assets/1ff6806b-c91e-4f86-8652-2938958cb0e0
+
 
 ## Prerequisites
 
