@@ -1,4 +1,6 @@
+
 # TDRive
+<img width="1022" height="877" alt="Screenshot 2026-05-28 at 12 21 32 PM" src="https://github.com/user-attachments/assets/b0fea42f-d3de-4ad7-893c-2b9308697ee4" />
 
 A TouchDesigner Custom TOP that renders [Rive](https://rive.app) animations
 (`.riv` files) using Rive's official C++ runtime + GPU renderer.
@@ -143,32 +145,11 @@ reference when populating your Strings DAT.
   readback buffer, then hands the bytes to TouchDesigner through
   `TOP_ExecuteMode::CPUMem`.
 
-The readback buffer is reused across cooks, so the per-frame cost at typical
-sizes (1080p–1440p) is a Rive draw + one blit + one `memcpy`.
-
-## Why CPU readback instead of direct GPU sharing
-
-The public TouchDesigner C++ TOP SDK exposes either a CPU buffer upload path
-or CUDA. There is no public Metal interop, so direct GPU sharing isn't
-available. The CPUMem upload is what the existing example plugins
-(`BGRemoverTOP`) also use. If higher throughput is needed later, the path
-would be Vulkan-mode TOPs sharing memory with a Vulkan Rive context — that's
-a much larger lift.
-
 ## Troubleshooting
 
-- **"No static libs found under …/out/release"** — run `scripts/build_rive.sh`
-  first. If the Rive build itself fails, check that `premake5` is on `PATH`
-  and that you have a recent enough clang (Xcode 14+).
 - **Plugin doesn't show up in TD** — make sure you copied the `.plugin`
   bundle (folder), not just the inner binary. Also check Window → Errors
   for load-time messages.
 - **Black output** — alpha = 0 in Background Color produces a transparent
   output. View it through a Composite TOP over a solid background to
   confirm the alpha is what you expect.
-
-## License
-
-The TouchDesigner SDK headers (`TOP_CPlusPlusBase.hpp`, `CPlusPlus_Common.hpp`)
-are licensed by Derivative and copied verbatim from the SDK samples. Rive's
-runtime is MIT-licensed. Plugin code in this repo is yours.
