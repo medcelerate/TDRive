@@ -140,17 +140,23 @@ jobs:
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
         env:
+          # --with_rive_text + --with_rive_layout: keep what we need.
           # Drop --with_rive_canvas (ORE + D3D11/D3D12/GL ORE backends);
-          # not used by TDRiveTOP, and cuts the Windows build down a lot.
-          RIVE_PREMAKE_ARGS: "--with_rive_text --with_rive_layout"
+          # unused by TDRiveTOP and saves significant Windows build time.
+          # --no-lto: Rive's release config enables LTO on Windows, which
+          # makes clang-cl emit LLVM-bitcode-wrapped COFF objs/libs that
+          # MSVC's link.exe can't consume - we hit LNK1107 the moment we
+          # try to link against rive*.lib from the TDRiveTOP CMake build.
+          # Turning LTO off restores standard COFF that link.exe groks.
+          RIVE_PREMAKE_ARGS: "--with_rive_text --with_rive_layout --no-lto"
           # Use ninja instead of vs2022/MSBuild. Rive's MSBuild invocation
           # doesn't pass /m, so projects build serially - ninja is fully
           # parallel and finishes in a fraction of the time on CI.
           RIVE_BUILD_SYSTEM: "ninja"
         # Args after `--` are forwarded to ninja as explicit build targets,
         # so we only build the static libs we actually link. Skipping
-        # path_fiddle (the GLFW sample exe) avoids the LNK1107 that bites
-        # otherwise - and we never use it.
+        # path_fiddle (the GLFW sample exe) avoids dragging GLFW + the
+        # other fiddle backends into the build.
         run: scripts\build_rive.bat release -- rive rive_pls_renderer rive_decoders rive_harfbuzz rive_sheenbidi rive_yoga libpng libjpeg libwebp zlib miniaudio
 
       - name: Configure plugin
