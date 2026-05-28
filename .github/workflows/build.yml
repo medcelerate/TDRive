@@ -53,6 +53,10 @@ jobs:
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
+        # Drop --with_rive_canvas (ORE + D3D11/D3D12/GL ORE backends) - we
+        # only use the PLS renderer, and canvas/ORE adds ~30% of build time.
+        env:
+          RIVE_PREMAKE_ARGS: "--with_rive_text --with_rive_layout"
         run: ./scripts/build_rive.sh release
 
       - name: Configure plugin
@@ -61,11 +65,16 @@ jobs:
       - name: Build plugin
         run: cmake --build build --config Release --parallel
 
+      - name: Package macOS plugin
+        run: |
+          mkdir -p dist
+          (cd build && zip -r ../dist/TDRive_mac.zip TDRiveTOP.plugin)
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TDRiveTOP-macos-arm64
-          path: build/TDRiveTOP.plugin
+          name: TDRive_mac
+          path: dist/TDRive_mac.zip
 
   # ---------------------------------------------------------------------------
   windows:
@@ -120,6 +129,14 @@ jobs:
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
+        env:
+          # Drop --with_rive_canvas (ORE + D3D11/D3D12/GL ORE backends);
+          # not used by TDRiveTOP, and cuts the Windows build down a lot.
+          RIVE_PREMAKE_ARGS: "--with_rive_text --with_rive_layout"
+          # Use ninja instead of vs2022/MSBuild. Rive's MSBuild invocation
+          # doesn't pass /m, so projects build serially - ninja is fully
+          # parallel and finishes in a fraction of the time on CI.
+          RIVE_BUILD_SYSTEM: "ninja"
         run: scripts\build_rive.bat release
 
       - name: Configure plugin
@@ -128,36 +145,48 @@ jobs:
       - name: Build plugin
         run: cmake --build build --config Release --parallel
 
+      - name: Package Windows plugin
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path build\Release\TDRiveTOP.dll -DestinationPath dist\TDRive_win.zip -Force
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TDRiveTOP-windows-x64
-          path: build/Release/TDRiveTOP.dll
+          name: TDRive_win
+          path: dist/TDRive_win.zip
 
   # ---------------------------------------------------------------------------
   release:
+    # Runs only on a v*.*.* tag (e.g. v0.1.0, v1.2.3). Builds both platforms
+    # first via 'needs:', then attaches the prepared zips to a GitHub Release.
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [macos, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          name: TDRive_mac
+          path: release
 
-      - name: Repackage
-        run: |
-          cd artifacts
-          # macOS plugin -> tar.gz preserves bundle dir structure.
-          tar -C TDRiveTOP-macos-arm64 -czf TDRiveTOP-macos-arm64.tar.gz .
-          # Windows DLL stays as a zip.
-          cd TDRiveTOP-windows-x64 && zip ../TDRiveTOP-windows-x64.zip TDRiveTOP.dll && cd ..
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: TDRive_win
+          path: release
+
+      - name: List release files
+        run: ls -la release
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/TDRiveTOP-macos-arm64.tar.gz
-            artifacts/TDRiveTOP-windows-x64.zip
+            release/TDRive_mac.zip
+            release/TDRive_win.zip
           generate_release_notes: true
+          fail_on_unmatched_files: true
