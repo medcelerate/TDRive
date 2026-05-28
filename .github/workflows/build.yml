@@ -122,13 +122,6 @@ jobs:
           echo "ref=$RIVE_REF" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Restore Rive build cache
-        id: rive-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: third_party/rive-runtime/renderer/out
-          key: rive-windows-${{ steps.rive.outputs.sha }}-v2
-
       - name: Clone Rive runtime
         shell: bash
         run: |
@@ -136,6 +129,13 @@ jobs:
           git clone --recursive https://github.com/rive-app/rive-runtime.git third_party/rive-runtime
           git -C third_party/rive-runtime checkout ${{ steps.rive.outputs.sha }}
           git -C third_party/rive-runtime submodule update --init --recursive
+
+      - name: Restore Rive build cache
+        id: rive-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: third_party/rive-runtime/renderer/out
+          key: rive-windows-${{ steps.rive.outputs.sha }}-v2
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
