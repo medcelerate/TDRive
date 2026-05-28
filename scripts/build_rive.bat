@@ -8,14 +8,16 @@ REM   scripts\build_rive.bat clean release
 REM
 REM Prereqs:
 REM   * Visual Studio 2022 with the C++ workload (or Build Tools).
-REM   * premake5.exe on PATH (choco install premake, or download from premake.github.io).
+REM   * premake5.exe on PATH.
+REM   * Git for Windows installed - provides sh.exe / bash.exe that Rive's
+REM     own build_rive.sh wrapper requires.
 REM   * Run this from a "Developer Command Prompt for VS 2022" (or one that
 REM     has vcvars set), so cl.exe / MSBuild are available.
 REM
 REM Outputs land at:
 REM   third_party\rive-runtime\renderer\out\<config>\*.lib
 
-setlocal
+setlocal EnableDelayedExpansion
 set "ROOT_DIR=%~dp0.."
 set "RIVE_DIR=%ROOT_DIR%\third_party\rive-runtime"
 set "RIVE_REPO=https://github.com/rive-app/rive-runtime.git"
@@ -41,15 +43,34 @@ if not exist "%RIVE_DIR%\premake5_v2.lua" (
 where premake5 >nul 2>&1
 if errorlevel 1 (
     echo ERROR: premake5 not found on PATH.
-    echo Install with: choco install premake
-    echo Or download from https://premake.github.io/download
+    echo Download the Windows zip from https://github.com/premake/premake-core/releases
+    echo Extract premake5.exe somewhere on PATH.
     exit /b 1
 )
 
-REM The renderer/ premake5.lua dofiles in the core runtime + decoders +
-REM dependencies, so a single invocation produces everything.
+REM Rive's build_rive.bat is a one-liner that just runs "sh build_rive.sh".
+REM For that to work, build_rive.sh must be findable - which means the Rive
+REM build/ directory has to be on PATH. We also need an sh on PATH, which
+REM Git for Windows provides.
+set "PATH=%RIVE_DIR%\build;%PATH%"
+
+REM Make sure a POSIX shell is reachable. Git for Windows installs sh at
+REM C:\Program Files\Git\usr\bin\sh.exe but doesn't put it on PATH by
+REM default. Add it if we can find it.
+where sh >nul 2>&1
+if errorlevel 1 (
+    if exist "C:\Program Files\Git\usr\bin\sh.exe" (
+        set "PATH=C:\Program Files\Git\usr\bin;%PATH%"
+    ) else (
+        echo ERROR: sh not found. Install Git for Windows.
+        exit /b 1
+    )
+)
+
+REM Invoke from renderer/ - its premake5.lua dofiles in core + decoders +
+REM dependencies, producing every static lib we need in one shot.
 pushd "%RIVE_DIR%\renderer"
-call "%RIVE_DIR%\build\build_rive.bat" %ARGS%
+sh "%RIVE_DIR%\build\build_rive.sh" %ARGS%
 set "_RIVE_RC=%errorlevel%"
 popd
 

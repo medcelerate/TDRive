@@ -37,30 +37,19 @@ jobs:
           echo "ref=$RIVE_REF" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Cache Rive build
+      - name: Clone Rive runtime
+        run: |
+          mkdir -p third_party
+          git clone --recursive https://github.com/rive-app/rive-runtime.git third_party/rive-runtime
+          git -C third_party/rive-runtime checkout ${{ steps.rive.outputs.sha }}
+          git -C third_party/rive-runtime submodule update --init --recursive
+
+      - name: Cache Rive build outputs
         id: rive-cache
         uses: actions/cache@v4
         with:
           path: third_party/rive-runtime/renderer/out
           key: rive-macos-${{ steps.rive.outputs.sha }}-v1
-
-      - name: Clone Rive runtime
-        if: steps.rive-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p third_party
-          git clone --recursive https://github.com/rive-app/rive-runtime.git third_party/rive-runtime
-          git -C third_party/rive-runtime checkout ${{ steps.rive.outputs.sha }}
-          git -C third_party/rive-runtime submodule update --init --recursive
-
-      - name: Restore Rive source on cache hit
-        if: steps.rive-cache.outputs.cache-hit == 'true'
-        run: |
-          # The cache only stored the build outputs, not the sources. Re-clone
-          # so headers used by the plugin build are available.
-          mkdir -p third_party
-          git clone --recursive https://github.com/rive-app/rive-runtime.git third_party/rive-runtime
-          git -C third_party/rive-runtime checkout ${{ steps.rive.outputs.sha }}
-          git -C third_party/rive-runtime submodule update --init --recursive
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
