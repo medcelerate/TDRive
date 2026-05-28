@@ -1,5 +1,7 @@
-![Uploading Screenshot 2026-05-28 at 12.20.51 PM.png…]()
+
 # TDRive
+
+![Uploading Screenshot 2026-05-28 at 12.20.51 PM.png…]()
 
 A TouchDesigner Custom TOP that renders [Rive](https://rive.app) animations
 (`.riv` files) using Rive's official C++ runtime + GPU renderer.
