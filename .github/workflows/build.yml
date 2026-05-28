@@ -1,0 +1,164 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# Cancel in-progress runs for the same ref when a new push comes in.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  macos:
+    runs-on: macos-14   # arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false   # rive-runtime is fetched fresh below
+
+      - name: Install tools
+        run: |
+          brew update
+          brew install premake cmake
+
+      - name: Resolve Rive commit
+        id: rive
+        run: |
+          # Pin the Rive runtime commit so the cache key is stable. If you
+          # want a different commit, set RIVE_REF here or as a repo secret.
+          RIVE_REF="${RIVE_REF:-main}"
+          SHA=$(git ls-remote https://github.com/rive-app/rive-runtime.git "$RIVE_REF" | awk '{print $1}')
+          if [ -z "$SHA" ]; then echo "Could not resolve $RIVE_REF"; exit 1; fi
+          echo "ref=$RIVE_REF" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Rive build
+        id: rive-cache
+        uses: actions/cache@v4
+        with:
+          path: third_party/rive-runtime/renderer/out
+          key: rive-macos-${{ steps.rive.outputs.sha }}-v1
+
+      - name: Clone Rive runtime
+        if: steps.rive-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p third_party
+          git clone --recursive https://github.com/rive-app/rive-runtime.git third_party/rive-runtime
+          git -C third_party/rive-runtime checkout ${{ steps.rive.outputs.sha }}
+          git -C third_party/rive-runtime submodule update --init --recursive
+
+      - name: Restore Rive source on cache hit
+        if: steps.rive-cache.outputs.cache-hit == 'true'
+        run: |
+          # The cache only stored the build outputs, not the sources. Re-clone
+          # so headers used by the plugin build are available.
+          mkdir -p third_party
+          git clone --recursive https://github.com/rive-app/rive-runtime.git third_party/rive-runtime
+          git -C third_party/rive-runtime checkout ${{ steps.rive.outputs.sha }}
+          git -C third_party/rive-runtime submodule update --init --recursive
+
+      - name: Build Rive runtime
+        if: steps.rive-cache.outputs.cache-hit != 'true'
+        run: ./scripts/build_rive.sh release
+
+      - name: Configure plugin
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build plugin
+        run: cmake --build build --config Release --parallel
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TDRiveTOP-macos-arm64
+          path: build/TDRiveTOP.plugin
+
+  # ---------------------------------------------------------------------------
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Install premake
+        run: choco install -y premake
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Resolve Rive commit
+        id: rive
+        shell: bash
+        run: |
+          RIVE_REF="${RIVE_REF:-main}"
+          SHA=$(git ls-remote https://github.com/rive-app/rive-runtime.git "$RIVE_REF" | awk '{print $1}')
+          if [ -z "$SHA" ]; then echo "Could not resolve $RIVE_REF"; exit 1; fi
+          echo "ref=$RIVE_REF" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Rive build
+        id: rive-cache
+        uses: actions/cache@v4
+        with:
+          path: third_party/rive-runtime/renderer/out
+          key: rive-windows-${{ steps.rive.outputs.sha }}-v1
+
+      - name: Clone Rive runtime
+        shell: bash
+        run: |
+          mkdir -p third_party
+          git clone --recursive https://github.com/rive-app/rive-runtime.git third_party/rive-runtime
+          git -C third_party/rive-runtime checkout ${{ steps.rive.outputs.sha }}
+          git -C third_party/rive-runtime submodule update --init --recursive
+
+      - name: Build Rive runtime
+        if: steps.rive-cache.outputs.cache-hit != 'true'
+        run: scripts\build_rive.bat release
+
+      - name: Configure plugin
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build plugin
+        run: cmake --build build --config Release --parallel
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TDRiveTOP-windows-x64
+          path: build/Release/TDRiveTOP.dll
+
+  # ---------------------------------------------------------------------------
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Repackage
+        run: |
+          cd artifacts
+          # macOS plugin -> tar.gz preserves bundle dir structure.
+          tar -C TDRiveTOP-macos-arm64 -czf TDRiveTOP-macos-arm64.tar.gz .
+          # Windows DLL stays as a zip.
+          cd TDRiveTOP-windows-x64 && zip ../TDRiveTOP-windows-x64.zip TDRiveTOP.dll && cd ..
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/TDRiveTOP-macos-arm64.tar.gz
+            artifacts/TDRiveTOP-windows-x64.zip
+          generate_release_notes: true

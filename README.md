@@ -1,54 +1,73 @@
 # TDRive
 
 A TouchDesigner Custom TOP that renders [Rive](https://rive.app) animations
-(`.riv` files) using Rive's official C++ runtime + GPU renderer on Metal.
+(`.riv` files) using Rive's official C++ runtime + GPU renderer.
 
-Only macOS is supported at the moment (the existing plugin examples in the
-parent folder are macOS-only). Builds a `.plugin` bundle you drop into
-TouchDesigner's plugin path.
+- **macOS** (arm64) — Metal backend, ships as `TDRiveTOP.plugin`
+- **Windows** (x64) — D3D11 backend, ships as `TDRiveTOP.dll`
 
 ## Layout
 
 ```
 TDRive/
-├── TDRive/                       # plugin source
-│   ├── TDRiveTOP.mm              # the plugin
-│   ├── TOP_CPlusPlusBase.hpp     # TD SDK header (copied from BGRemoverTOP)
-│   ├── CPlusPlus_Common.hpp      # TD SDK header
-│   └── Info.plist                # bundle plist
+├── src/
+│   ├── TDRiveTOP.{h,cpp}         # cross-platform shell
+│   ├── IBackend.h                # backend interface
+│   ├── backend_metal.mm          # macOS Metal backend
+│   ├── backend_d3d11.cpp         # Windows D3D11 backend
+│   └── Info.plist                # macOS bundle plist
+├── td_sdk/
+│   ├── TOP_CPlusPlusBase.hpp     # TD Custom Operator SDK headers
+│   └── CPlusPlus_Common.hpp
 ├── scripts/
-│   └── build_rive.sh             # one-time Rive runtime build helper
+│   ├── build_rive.sh             # macOS Rive runtime build
+│   ├── build_rive.bat            # Windows Rive runtime build
+│   └── inspect_riv.mm            # diagnostic dumper (macOS only)
 ├── third_party/
-│   └── rive-runtime/             # cloned by build_rive.sh
-└── Makefile                      # plugin build
+│   └── rive-runtime/             # cloned by build_rive.{sh,bat}
+└── CMakeLists.txt                # cross-platform plugin build
 ```
 
 ## Prerequisites
 
+**macOS**
 - macOS 13.0+, Xcode command-line tools (`xcode-select --install`)
-- `premake5` (`brew install premake`) – Rive's build system needs it
-- A `.riv` file to test with
+- `premake5` — `brew install premake`
+- CMake 3.20+ — `brew install cmake`
+
+**Windows**
+- Visual Studio 2022 with the C++ workload (or VS Build Tools)
+- `premake5.exe` on `PATH` — `choco install premake`
+- CMake 3.20+ — `choco install cmake`
+- A "Developer Command Prompt for VS 2022" (or any shell with vcvars set)
 
 ## Build
 
-The first step pulls in `rive-runtime` and builds its static libraries. This
-takes 5–10 minutes the first time and is only needed once per Rive version.
+Step 1 pulls in `rive-runtime` and builds its static libraries. This takes
+5–10 minutes the first time and is only needed once per Rive commit.
 
+**macOS**
 ```sh
-./scripts/build_rive.sh        # release build (default)
-make                           # builds TDRiveTOP.plugin
+./scripts/build_rive.sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+# -> build/TDRiveTOP.plugin
 ```
 
-The plugin lands at `build/release/TDRiveTOP.plugin`.
+**Windows**
+```bat
+scripts\build_rive.bat
+cmake -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release
+:: -> build\Release\TDRiveTOP.dll
+```
 
 ## Install in TouchDesigner
 
-Drop `TDRiveTOP.plugin` into one of TouchDesigner's plugin search paths,
-typically:
+Drop the build output into TouchDesigner's plugin search path:
 
-```
-~/Library/Application Support/Derivative/TouchDesigner099/Plugins/
-```
+- **macOS**: `~/Library/Application Support/Derivative/TouchDesigner099/Plugins/TDRiveTOP.plugin`
+- **Windows**: `%USERPROFILE%\Documents\Derivative\TouchDesigner099\Plugins\TDRiveTOP.dll`
 
 …then restart TouchDesigner. The operator shows up as `Rive` in the Custom
 operators palette.
