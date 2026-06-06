@@ -80,6 +80,7 @@ rive::Fit FitFromIndex(int idx)
         case 4: return rive::Fit::fitHeight;
         case 5: return rive::Fit::none;
         case 6: return rive::Fit::scaleDown;
+        case 7: return rive::Fit::layout;
         default: return rive::Fit::contain;
     }
 }
@@ -187,9 +188,9 @@ void TDRiveTOP::setupParameters(OP_ParameterManager* m, void*)
         sp.label = "Fit";
         sp.page  = "Rive";
         sp.defaultValue = "contain";
-        const char* names[]  = {"contain","cover","fill","fitwidth","fitheight","none","scaledown"};
-        const char* labels[] = {"Contain","Cover","Fill","Fit Width","Fit Height","None","Scale Down"};
-        m->appendMenu(sp, 7, names, labels);
+        const char* names[]  = {"contain","cover","fill","fitwidth","fitheight","none","scaledown","layout"};
+        const char* labels[] = {"Contain","Cover","Fill","Fit Width","Fit Height","None","Scale Down","Layout"};
+        m->appendMenu(sp, 8, names, labels);
     }
     {
         OP_StringParameter sp("Alignment");
@@ -214,16 +215,6 @@ void TDRiveTOP::setupParameters(OP_ParameterManager* m, void*)
         m->appendFloat(np);
     }
     {
-        OP_NumericParameter np("Bgcolor");
-        np.label = "Background Color";
-        np.page  = "Rive";
-        np.defaultValues[0] = 0.0; np.minSliders[0] = 0.0; np.maxSliders[0] = 1.0;
-        np.defaultValues[1] = 0.0; np.minSliders[1] = 0.0; np.maxSliders[1] = 1.0;
-        np.defaultValues[2] = 0.0; np.minSliders[2] = 0.0; np.maxSliders[2] = 1.0;
-        np.defaultValues[3] = 0.0; np.minSliders[3] = 0.0; np.maxSliders[3] = 1.0;
-        m->appendRGBA(np);
-    }
-    {
         OP_NumericParameter np("Resolution");
         np.label = "Resolution";
         np.page  = "Rive";
@@ -232,6 +223,16 @@ void TDRiveTOP::setupParameters(OP_ParameterManager* m, void*)
         np.minSliders[0] = 16;  np.maxSliders[0] = 4096;
         np.minSliders[1] = 16;  np.maxSliders[1] = 4096;
         m->appendWH(np);
+    }
+    {
+        OP_NumericParameter np("Bgcolor");
+        np.label = "Background Color";
+        np.page  = "Rive";
+        np.defaultValues[0] = 0.0; np.minSliders[0] = 0.0; np.maxSliders[0] = 1.0;
+        np.defaultValues[1] = 0.0; np.minSliders[1] = 0.0; np.maxSliders[1] = 1.0;
+        np.defaultValues[2] = 0.0; np.minSliders[2] = 0.0; np.maxSliders[2] = 1.0;
+        np.defaultValues[3] = 0.0; np.minSliders[3] = 0.0; np.maxSliders[3] = 1.0;
+        m->appendRGBA(np);
     }
 }
 
@@ -686,6 +687,18 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
     mLastTick = now;
     mHasTick = true;
     dt *= (float)speed;
+
+    // In layout mode resize the artboard to the render target so Rive's internal
+    // layout constraints (fill, etc.) apply to the actual output dimensions.
+    // In all other modes restore the artboard's intrinsic size from the .riv file.
+    if (ok && mArtboard) {
+        if (FitFromIndex(fitIdx) == rive::Fit::layout) {
+            mArtboard->width((float)resW);
+            mArtboard->height((float)resH);
+        } else {
+            mArtboard->resetSize();
+        }
+    }
 
     if (ok && mScene)        mScene->advanceAndApply(dt);
     else if (ok && mArtboard) mArtboard->advance(dt);
