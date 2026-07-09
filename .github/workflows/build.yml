@@ -95,7 +95,12 @@ jobs:
 
   # ---------------------------------------------------------------------------
   windows:
-    runs-on: windows-latest
+    # Pin to windows-2022 for a stable toolchain. 'windows-latest' has rolled
+    # to VS 2026 (v18) and dropped VS 2022, which breaks the hardcoded
+    # "Visual Studio 17 2022" CMake generator below ("could not find any
+    # instance of Visual Studio"). Pinning mirrors the macos-14 pin and keeps
+    # release builds reproducible.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
         with:
