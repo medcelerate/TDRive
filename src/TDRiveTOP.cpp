@@ -508,6 +508,17 @@ bool TDRiveTOP::selectSceneIfNeeded(const char* smC)
     mScene = std::move(scene);
     mLoadedStateMachine = sm;
     mPrevChopValues.clear();
+
+    // Data binding: bindArtboardViewModel() binds the view-model instance to
+    // the artboard, but the freshly-created scene / state machine instance
+    // needs it bound too - otherwise data-bound inputs and conditions inside
+    // the state machine never resolve (this is the "view-model data binding
+    // didn't work" report). Mirrors Rive's own path_fiddle sample, which binds
+    // the same instance to both the artboard and the scene.
+    if (mScene && mVMRuntime) {
+        mScene->bindViewModelInstance(mVMRuntime->instance());
+    }
+
     clearError();
     return true;
 }

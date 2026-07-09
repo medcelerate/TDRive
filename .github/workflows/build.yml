@@ -7,6 +7,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Pin the Rive runtime to a specific release tag so CI builds are reproducible
+# and match the runtime the plugin has been tested against. Bump this to a newer
+# rive-app/rive-runtime tag (https://github.com/rive-app/rive-runtime/releases)
+# to move forward deliberately, rather than tracking a moving 'main'.
+env:
+  RIVE_REF: runtime-v0.1.101
+
 # Cancel in-progress runs for the same ref when a new push comes in.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
