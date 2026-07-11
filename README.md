@@ -119,6 +119,29 @@ The Info DAT lists `vm:string` / `vm:number` / `vm:bool` / `vm:trigger`
 rows for each view-model property, alongside the SMI inputs. Use it as the
 reference when populating your Strings DAT.
 
+## Injecting textures (view-model image properties)
+
+Rive view models can expose **image** properties (`vm:image` in the Info
+DAT). The **Textures** parameter page has four slots, each pairing an
+**Image N TOP** (any TOP in your network) with an **Image N Property** (the
+view-model image property it drives). Every cook, the TOP's pixels are
+pushed into the Rive image, so video, Render TOPs, NDI — anything — can
+feed artwork inside the .riv.
+
+Transport is automatic:
+
+- **Windows + NVIDIA**: the plugin registers itself in CUDA execute mode
+  and textures move GPU→GPU in both directions (input TOPs into Rive, and
+  the rendered frame back to TouchDesigner) with **zero CPU copies**.
+  Input TOPs must be RGBA 8-bit in this mode.
+- **macOS, or Windows without CUDA**: a CPU download path is used
+  (one frame of latency on injected textures, imperceptible in most
+  setups). The rendered frame is read back through CPU memory as before.
+
+Note: Rive samples images as **premultiplied alpha**. The CPU path
+premultiplies for you; in CUDA mode, premultiply upstream (e.g. a
+Composite/Reorder TOP) if your input has transparency.
+
 ## How it works
 
 - Cooks every frame.

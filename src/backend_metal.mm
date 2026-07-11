@@ -14,7 +14,9 @@
 
 #include "rive/renderer/render_context.hpp"
 #include "rive/renderer/rive_renderer.hpp"
+#include "rive/renderer/texture.hpp"
 #include "rive/renderer/metal/render_context_metal_impl.h"
+#include "rive/renderer/rive_render_image.hpp"
 
 namespace tdrive {
 
@@ -23,6 +25,7 @@ public:
     ~MetalBackend() override
     {
         @autoreleasepool {
+            for (auto& s : mSlots) { s.img.reset(); s.tex = nil; s.w = s.h = 0; }
             mRenderTarget.reset();
             if (mRenderContext) {
                 mRenderContext->releaseResources();
@@ -128,18 +131,63 @@ public:
         return true;
     }
 
+    rive::rcp<rive::RenderImage> updateImageSlot(
+        int slot, uint32_t w, uint32_t h,
+        const uint8_t* rgba, std::string& err) override
+    {
+        if (slot < 0 || slot >= kMaxImageSlots) { err = "Bad image slot."; return nullptr; }
+        if (w == 0 || h == 0) { err = "Image input has zero size."; return nullptr; }
+        if (!mRenderContext || !mDevice) { err = "Metal backend not initialized."; return nullptr; }
+
+        Slot& s = mSlots[slot];
+        @autoreleasepool {
+            if (!s.tex || s.w != w || s.h != h || !s.img) {
+                MTLTextureDescriptor* desc = [MTLTextureDescriptor
+                    texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                 width:w
+                                                height:h
+                                             mipmapped:NO];
+                desc.usage = MTLTextureUsageShaderRead;
+                // Shared storage so replaceRegion works without a blit.
+                desc.storageMode = MTLStorageModeShared;
+                s.tex = [mDevice newTextureWithDescriptor:desc];
+                if (!s.tex) { err = "Failed to allocate image MTLTexture."; return nullptr; }
+
+                auto* impl = mRenderContext->static_impl_cast<rive::gpu::RenderContextMetalImpl>();
+                auto riveTex = impl->adoptImageTexture(s.tex, w, h);
+                if (!riveTex) { err = "adoptImageTexture failed."; s.tex = nil; return nullptr; }
+                s.img = rive::make_rcp<rive::RiveRenderImage>(std::move(riveTex));
+                s.w = w;
+                s.h = h;
+            }
+            [s.tex replaceRegion:MTLRegionMake2D(0, 0, w, h)
+                     mipmapLevel:0
+                       withBytes:rgba
+                     bytesPerRow:(NSUInteger)w * 4];
+        }
+        return s.img;
+    }
+
 private:
+    struct Slot {
+        id<MTLTexture>               tex = nil;
+        rive::rcp<rive::RenderImage> img;
+        uint32_t                     w = 0, h = 0;
+    };
+
     id<MTLDevice>       mDevice  = nil;
     id<MTLCommandQueue> mQueue   = nil;
     id<MTLTexture>      mTexture = nil;
     id<MTLBuffer>       mReadBuf = nil;
     uint32_t            mW = 0, mH = 0;
 
+    Slot mSlots[kMaxImageSlots];
+
     std::unique_ptr<rive::gpu::RenderContext>  mRenderContext;
     rive::rcp<rive::gpu::RenderTargetMetal>    mRenderTarget;
 };
 
-std::unique_ptr<IBackend> CreateBackend()
+std::unique_ptr<IBackend> CreateBackend(bool /*cudaMode - no CUDA on macOS*/)
 {
     return std::make_unique<MetalBackend>();
 }

@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "rive/file.hpp"
 #include "rive/artboard.hpp"
@@ -45,6 +46,11 @@ private:
     void applyInputsFromCHOP(const TD::OP_CHOPInput* chop);
     void applyStringsFromDAT(const TD::OP_DATInput* dat);
     void bindArtboardViewModel();
+    // Texture injection (Image1..N params -> view-model image properties).
+    // CPU download path; used on macOS and as the Windows non-CUDA fallback.
+    void applyImageInputsCPU(const TD::OP_Inputs* inputs);
+    // Binds 'img' to the named view-model image property (once per change).
+    void bindSlotImage(int slot, const char* propName, rive::RenderImage* img);
     rive::StateMachineInstance* currentSMI() { return mSMI; }
     void setError(const std::string& s) { mError = s; }
     void clearError()                   { mError.clear(); }
@@ -71,6 +77,14 @@ private:
     // Edge detection
     std::unordered_map<std::string, float>       mPrevChopValues;
     std::unordered_map<std::string, std::string> mPrevDatValues;
+
+    // Texture injection state. mPendingDl holds the async CPU download
+    // started on the previous cook (1-frame latency avoids a GPU stall);
+    // mBoundSlotImage tracks which RenderImage each VM property last saw so
+    // we only rebind on identity change.
+    TD::OP_SmartRef<TD::OP_TOPDownloadResult> mPendingDl[tdrive::kMaxImageSlots];
+    rive::RenderImage*   mBoundSlotImage[tdrive::kMaxImageSlots] = {};
+    std::vector<uint8_t> mPremulScratch;
 
     std::string mError;
 };

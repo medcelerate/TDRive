@@ -75,7 +75,7 @@ set(TDRIVE_SOURCES
 if(APPLE)
     list(APPEND TDRIVE_SOURCES src/backend_metal.mm)
 elseif(WIN32)
-    list(APPEND TDRIVE_SOURCES src/backend_d3d11.cpp)
+    list(APPEND TDRIVE_SOURCES src/backend_d3d11.cpp src/cuda_interop_win.cpp)
 else()
     message(FATAL_ERROR "Unsupported platform - macOS and Windows only.")
 endif()
@@ -107,6 +107,16 @@ target_include_directories(TDRiveTOP PRIVATE
 
 target_link_libraries(TDRiveTOP PRIVATE ${RIVE_LIBS})
 
+# The Rive static libs are built with RTTI disabled (they use an internal
+# "lite rtti" scheme). Any rive-derived class we instantiate in plugin TUs
+# (e.g. RiveRenderImage) would otherwise emit typeinfo references to symbols
+# the libs don't export. Match their flags.
+if(MSVC)
+    target_compile_options(TDRiveTOP PRIVATE /GR-)
+else()
+    target_compile_options(TDRiveTOP PRIVATE -fno-rtti)
+endif()
+
 if(APPLE)
     # ObjC++ ARC for backend_metal.mm.
     target_compile_options(TDRiveTOP PRIVATE
@@ -132,6 +142,8 @@ elseif(WIN32)
         dxgi
         dxguid
         d3dcompiler
+        # EnumProcessModules/GetModuleBaseName for the cudart runtime loader.
+        psapi
     )
     # Statically link the MSVC runtime to match how the Rive libs are built.
     set_property(TARGET TDRiveTOP PROPERTY

@@ -26,6 +26,10 @@
 #include "rive/data_bind/data_values/data_type.hpp"
 #include "rive/renderer/rive_renderer.hpp"
 
+#if defined(_WIN32)
+#include "cuda_interop_win.h"
+#endif
+
 using namespace TD;
 
 // =============================================================================
@@ -66,6 +70,8 @@ const char* DataTypeName(rive::DataType t)
         case DataType::list:      return "vm:list";
         case DataType::viewModel: return "vm:viewModel";
         case DataType::artboard:  return "vm:artboard";
+        case DataType::assetImage: return "vm:image";
+        case DataType::assetFont:  return "vm:font";
         default:                  return "vm:?";
     }
 }
@@ -109,6 +115,24 @@ bool dat_value_truthy(const std::string& s)
     try { return std::stof(s) > 0.0f; } catch (...) { return false; }
 }
 
+// Rive samples images as premultiplied alpha (its decoders premultiply on
+// load), so injected straight-alpha pixels from TD get premultiplied here.
+// Fully-opaque pixels are left untouched.
+void premultiply_rgba(uint8_t* p, size_t pixelCount)
+{
+    for (size_t i = 0; i < pixelCount; ++i, p += 4) {
+        const uint32_t a = p[3];
+        if (a == 255) continue;
+        p[0] = (uint8_t)((p[0] * a + 127) / 255);
+        p[1] = (uint8_t)((p[1] * a + 127) / 255);
+        p[2] = (uint8_t)((p[2] * a + 127) / 255);
+    }
+}
+
+// True when the plugin registered with TOP_ExecuteMode::CUDA (decided once
+// at DLL load in FillTOPPluginInfo; Windows + NVIDIA only).
+bool gCUDAMode = false;
+
 } // namespace
 
 // =============================================================================
@@ -118,7 +142,7 @@ bool dat_value_truthy(const std::string& s)
 TDRiveTOP::TDRiveTOP(const OP_NodeInfo* /*info*/, TOP_Context* context)
     : mContext(context)
 {
-    mBackend = tdrive::CreateBackend();
+    mBackend = tdrive::CreateBackend(gCUDAMode);
 }
 
 TDRiveTOP::~TDRiveTOP()
@@ -223,6 +247,30 @@ void TDRiveTOP::setupParameters(OP_ParameterManager* m, void*)
         np.minSliders[0] = 16;  np.maxSliders[0] = 4096;
         np.minSliders[1] = 16;  np.maxSliders[1] = 4096;
         m->appendWH(np);
+    }
+    // Texture injection: each slot pairs a source TOP with the name of the
+    // view-model image property it drives (see the Info DAT for the "vm:image"
+    // properties the loaded .riv exposes).
+    for (int i = 0; i < tdrive::kMaxImageSlots; ++i) {
+        char nameBuf[16], labelBuf[32];
+        {
+            std::snprintf(nameBuf, sizeof(nameBuf), "Image%d", i + 1);
+            std::snprintf(labelBuf, sizeof(labelBuf), "Image %d TOP", i + 1);
+            OP_StringParameter sp(nameBuf);
+            sp.label = labelBuf;
+            sp.page  = "Textures";
+            sp.defaultValue = "";
+            m->appendTOP(sp);
+        }
+        {
+            std::snprintf(nameBuf, sizeof(nameBuf), "Imageprop%d", i + 1);
+            std::snprintf(labelBuf, sizeof(labelBuf), "Image %d Property", i + 1);
+            OP_StringParameter sp(nameBuf);
+            sp.label = labelBuf;
+            sp.page  = "Textures";
+            sp.defaultValue = "";
+            m->appendString(sp);
+        }
     }
     {
         OP_NumericParameter np("Bgcolor");
@@ -526,6 +574,8 @@ bool TDRiveTOP::selectSceneIfNeeded(const char* smC)
 void TDRiveTOP::bindArtboardViewModel()
 {
     mVMRuntime.reset();
+    // A new VM runtime knows nothing about previously bound images.
+    for (auto& p : mBoundSlotImage) p = nullptr;
     if (!mFile || !mArtboard) return;
     auto* vmr = mFile->defaultArtboardViewModel(mArtboard.get());
     if (!vmr) return;
@@ -639,6 +689,61 @@ void TDRiveTOP::applyStringsFromDAT(const OP_DATInput* dat)
 }
 
 // =============================================================================
+// Texture injection
+// =============================================================================
+
+void TDRiveTOP::bindSlotImage(int slot, const char* propName,
+                              rive::RenderImage* img)
+{
+    if (!mVMRuntime || !propName || !*propName || !img) return;
+    if (mBoundSlotImage[slot] == img) return;
+    auto* ip = mVMRuntime->propertyImage(propName);
+    if (!ip) return;  // property doesn't exist / isn't an image - skip
+    ip->value(img);
+    mBoundSlotImage[slot] = img;
+}
+
+void TDRiveTOP::applyImageInputsCPU(const OP_Inputs* inputs)
+{
+    for (int slot = 0; slot < tdrive::kMaxImageSlots; ++slot) {
+        char parName[16];
+        std::snprintf(parName, sizeof(parName), "Image%d", slot + 1);
+        const OP_TOPInput* top = inputs->getParTOP(parName);
+        std::snprintf(parName, sizeof(parName), "Imageprop%d", slot + 1);
+        const char* prop = inputs->getParString(parName);
+
+        if (!top || !prop || !*prop) {
+            mPendingDl[slot] = TD::OP_SmartRef<TD::OP_TOPDownloadResult>();
+            continue;
+        }
+
+        // Consume the download started on the previous cook (waiting a frame
+        // avoids stalling the GPU pipeline; see the CPUMemoryTOP SDK sample).
+        if (mPendingDl[slot]) {
+            const uint32_t w = mPendingDl[slot]->textureDesc.width;
+            const uint32_t h = mPendingDl[slot]->textureDesc.height;
+            void* data = mPendingDl[slot]->getData();
+            if (data && w > 0 && h > 0) {
+                const size_t bytes = (size_t)w * h * 4;
+                mPremulScratch.resize(bytes);
+                std::memcpy(mPremulScratch.data(), data, bytes);
+                premultiply_rgba(mPremulScratch.data(), (size_t)w * h);
+                std::string err;
+                auto img = mBackend->updateImageSlot(
+                    slot, w, h, mPremulScratch.data(), err);
+                if (img) bindSlotImage(slot, prop, img.get());
+                else if (!err.empty()) setError(err);
+            }
+        }
+
+        // Kick off this cook's download (RGBA8, converted by TD if needed).
+        TD::OP_TOPInputDownloadOptions opts;
+        opts.pixelFormat = TD::OP_PixelFormat::RGBA8Fixed;
+        mPendingDl[slot] = top->downloadTexture(opts, nullptr);
+    }
+}
+
+// =============================================================================
 // Execute
 // =============================================================================
 
@@ -689,6 +794,12 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
         }
     }
 
+    // Texture injection, CPU download path. (In CUDA mode the inputs are
+    // instead copied GPU->GPU inside the CUDA-operations bracket below.)
+    if (ok && !gCUDAMode) {
+        applyImageInputsCPU(inputs);
+    }
+
     auto now = std::chrono::steady_clock::now();
     float dt = 0.0f;
     if (mHasTick) {
@@ -726,11 +837,6 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
     fd.clearColor = ((uint32_t)a8 << 24) | ((uint32_t)r8 << 16)
                   | ((uint32_t)g8 <<  8) |  (uint32_t)b8;
 
-    // Reserve the TD output buffer and let the backend fill it.
-    const uint64_t byteSize = (uint64_t)resW * (uint64_t)resH * 4;
-    TD::OP_SmartRef<TD::TOP_Buffer> buf =
-        mContext->createOutputBuffer(byteSize, TD::TOP_BufferFlags::None, nullptr);
-
     auto drawFn = [this, fitIdx, alignIdx, resW, resH](rive::Renderer* r) {
         if (!mArtboard) return;
         r->save();
@@ -741,6 +847,79 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
         mArtboard->draw(r);
         r->restore();
     };
+
+#if defined(_WIN32)
+    if (gCUDAMode) {
+        // ---------------------------------------------------------------------
+        // CUDA path: inject input TOPs and hand the frame back to TD entirely
+        // on the GPU. The cudaArray* fields of every OP_CUDAArrayInfo only
+        // become valid once beginCUDAOperations() runs, so gather them all
+        // first.
+        // ---------------------------------------------------------------------
+        struct SlotAcq {
+            const OP_CUDAArrayInfo* info = nullptr;
+            const char*             prop = nullptr;
+        };
+        SlotAcq acq[tdrive::kMaxImageSlots];
+        if (ok) {
+            for (int slot = 0; slot < tdrive::kMaxImageSlots; ++slot) {
+                char parName[16];
+                std::snprintf(parName, sizeof(parName), "Image%d", slot + 1);
+                const OP_TOPInput* top = inputs->getParTOP(parName);
+                std::snprintf(parName, sizeof(parName), "Imageprop%d", slot + 1);
+                const char* prop = inputs->getParString(parName);
+                if (!top || !prop || !*prop) continue;
+                if (top->textureDesc.pixelFormat != OP_PixelFormat::RGBA8Fixed) {
+                    setError("Image inputs must be RGBA8 (8-bit fixed) in "
+                             "CUDA mode.");
+                    continue;
+                }
+                OP_CUDAAcquireInfo acquire;
+                acq[slot].info = top->getCUDAArray(acquire, nullptr);
+                acq[slot].prop = prop;
+            }
+        }
+
+        TOP_CUDAOutputInfo co;
+        co.textureDesc.width       = (uint32_t)resW;
+        co.textureDesc.height      = (uint32_t)resH;
+        co.textureDesc.depth       = 1;
+        co.textureDesc.texDim      = OP_TexDim::e2D;
+        co.textureDesc.pixelFormat = OP_PixelFormat::RGBA8Fixed;
+        co.colorBufferIndex        = 0;
+        const OP_CUDAArrayInfo* out = output->createCUDAArray(co, nullptr);
+        if (!out) { setError("createCUDAArray failed."); return; }
+
+        if (!mContext->beginCUDAOperations(nullptr)) {
+            setError("beginCUDAOperations failed.");
+            return;
+        }
+
+        for (int slot = 0; slot < tdrive::kMaxImageSlots; ++slot) {
+            if (!acq[slot].info || !acq[slot].info->cudaArray) continue;
+            const auto& desc = acq[slot].info->textureDesc;
+            std::string ierr;
+            auto img = mBackend->updateImageSlotCUDA(
+                slot, desc.width, desc.height,
+                acq[slot].info->cudaArray, ierr);
+            if (img) bindSlotImage(slot, acq[slot].prop, img.get());
+            else if (!ierr.empty()) setError(ierr);
+        }
+
+        std::string rerr;
+        bool rendered = mBackend->renderToCUDA(fd, drawFn, out->cudaArray, rerr);
+        mContext->endCUDAOperations(nullptr);
+        if (!rendered && !rerr.empty()) setError(rerr);
+        return;
+    }
+#endif
+
+    // -------------------------------------------------------------------------
+    // CPUMem path: render, read back, and hand TD a CPU buffer to upload.
+    // -------------------------------------------------------------------------
+    const uint64_t byteSize = (uint64_t)resW * (uint64_t)resH * 4;
+    TD::OP_SmartRef<TD::TOP_Buffer> buf =
+        mContext->createOutputBuffer(byteSize, TD::TOP_BufferFlags::None, nullptr);
 
     std::string err;
     if (!mBackend->renderAndReadback(fd, drawFn, buf->data, err)) {
@@ -774,7 +953,18 @@ extern "C" {
 TD_VIS DLLEXPORT void FillTOPPluginInfo(TD::TOP_PluginInfo* info)
 {
     info->apiVersion  = TD::TOPCPlusPlusAPIVersion;
+
+    // Prefer CUDA execute mode when the machine can do zero-copy texture
+    // sharing (Windows + an NVIDIA GPU whose adapter D3D11 can also use).
+    // Everything else - macOS, AMD/Intel GPUs, missing CUDA runtime - falls
+    // back to the CPUMem readback path.
     info->executeMode = TD::TOP_ExecuteMode::CPUMem;
+#if defined(_WIN32)
+    if (tdrive::cuda::AvailableForD3D11()) {
+        info->executeMode = TD::TOP_ExecuteMode::CUDA;
+        gCUDAMode = true;
+    }
+#endif
 
     auto& custom = info->customOPInfo;
     custom.opType->setString("Rive");
