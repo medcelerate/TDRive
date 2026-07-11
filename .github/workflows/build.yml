@@ -12,7 +12,7 @@ on:
 # rive-app/rive-runtime tag (https://github.com/rive-app/rive-runtime/releases)
 # to move forward deliberately, rather than tracking a moving 'main'.
 env:
-  RIVE_REF: runtime-v0.1.101
+  RIVE_REF: runtime-v0.1.171
 
 # Cancel in-progress runs for the same ref when a new push comes in.
 concurrency:
@@ -56,14 +56,15 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-macos-${{ steps.rive.outputs.sha }}-v2
+          key: rive-macos-${{ steps.rive.outputs.sha }}-v3
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
-        # Drop --with_rive_canvas (ORE + D3D11/D3D12/GL ORE backends) - we
-        # only use the PLS renderer, and canvas/ORE adds ~30% of build time.
+        # --with_rive_canvas compiles in GPU Canvas (RenderCanvas + the Ore
+        # GPU abstraction layer, Metal backend on macOS). This matches Rive's
+        # own default build flags, so we have parity with their releases.
         env:
-          RIVE_PREMAKE_ARGS: "--with_rive_text --with_rive_layout"
+          RIVE_PREMAKE_ARGS: "--with_rive_text --with_rive_layout --with_rive_canvas"
         run: ./scripts/build_rive.sh release
 
       - name: Configure plugin
@@ -80,7 +81,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-macos-${{ steps.rive.outputs.sha }}-v2
+          key: rive-macos-${{ steps.rive.outputs.sha }}-v3
 
       - name: Package macOS plugin
         run: |
@@ -147,20 +148,20 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-windows-${{ steps.rive.outputs.sha }}-v2
+          key: rive-windows-${{ steps.rive.outputs.sha }}-v3
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
         env:
-          # --with_rive_text + --with_rive_layout: keep what we need.
-          # Drop --with_rive_canvas (ORE + D3D11/D3D12/GL ORE backends);
-          # unused by TDRiveTOP and saves significant Windows build time.
+          # --with_rive_text + --with_rive_layout + --with_rive_canvas: the
+          # canvas flag compiles in GPU Canvas (RenderCanvas + Ore, D3D11/D3D12
+          # backends on Windows) and matches Rive's own default build flags.
           # --no-lto: Rive's release config enables LTO on Windows, which
           # makes clang-cl emit LLVM-bitcode-wrapped COFF objs/libs that
           # MSVC's link.exe can't consume - we hit LNK1107 the moment we
           # try to link against rive*.lib from the TDRiveTOP CMake build.
           # Turning LTO off restores standard COFF that link.exe groks.
-          RIVE_PREMAKE_ARGS: "--with_rive_text --with_rive_layout --no-lto"
+          RIVE_PREMAKE_ARGS: "--with_rive_text --with_rive_layout --with_rive_canvas --no-lto"
           # Use ninja instead of vs2022/MSBuild. Rive's MSBuild invocation
           # doesn't pass /m, so projects build serially - ninja is fully
           # parallel and finishes in a fraction of the time on CI.
@@ -185,7 +186,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-windows-${{ steps.rive.outputs.sha }}-v2
+          key: rive-windows-${{ steps.rive.outputs.sha }}-v3
 
       - name: Package Windows plugin
         shell: pwsh
@@ -232,3 +233,6 @@ jobs:
             release/TDRive_win.zip
           generate_release_notes: true
           fail_on_unmatched_files: true
+          # Tags with a semver pre-release suffix (v1.1.0-ea, v2.0.0-rc1, ...)
+          # publish as GitHub prereleases instead of full releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}
