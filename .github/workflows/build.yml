@@ -215,6 +215,25 @@ jobs:
           name: TDRive_win
           path: dist/TDRive_win_rive-*.zip
 
+      - name: Package RiveRenderStream
+        # The standalone Disguise RenderStream workload (renderstream/) is built
+        # by the same `cmake --build` above (WIN32-only target). It static-links
+        # Rive + the MSVC runtime and loads d3renderstream.dll from the Disguise
+        # install at runtime, so the bare exe needs no bundled dependencies.
+        # Shipped as its own zip since it targets Disguise, not TouchDesigner.
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $riveTag = $env:RIVE_REF -replace '^runtime-', ''
+          $zip = "dist\RiveRenderStream_win_rive-$riveTag.zip"
+          Compress-Archive -Path build\Release\RiveRenderStream.exe -DestinationPath $zip -Force
+
+      - name: Upload RiveRenderStream artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: RiveRenderStream_win
+          path: dist/RiveRenderStream_win_rive-*.zip
+
   # ---------------------------------------------------------------------------
   release:
     # Runs only on a v*.*.* tag (e.g. v0.1.0, v1.2.3). Builds both platforms
@@ -237,6 +256,12 @@ jobs:
           name: TDRive_win
           path: release
 
+      - name: Download RiveRenderStream artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: RiveRenderStream_win
+          path: release
+
       - name: List release files
         run: ls -la release
 
@@ -246,6 +271,7 @@ jobs:
           files: |
             release/TDRive_mac_rive-*.zip
             release/TDRive_win_rive-*.zip
+            release/RiveRenderStream_win_rive-*.zip
           generate_release_notes: true
           fail_on_unmatched_files: true
           # Prepend which Rive runtime this build was compiled against so
