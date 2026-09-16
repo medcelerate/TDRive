@@ -56,15 +56,17 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-macos-${{ steps.rive.outputs.sha }}-v3
+          key: rive-macos-${{ steps.rive.outputs.sha }}-v4
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
         # --with_rive_canvas compiles in GPU Canvas (RenderCanvas + the Ore
-        # GPU abstraction layer, Metal backend on macOS). This matches Rive's
-        # own default build flags, so we have parity with their releases.
+        # GPU abstraction layer, Metal backend on macOS). --with_rive_scripting
+        # swaps the stub luau_vm for a real Luau VM (+ libhydrogen), which is
+        # what actually makes script-driven GPU Canvas content animate - a
+        # canvas without scripting allocates but nothing draws into it.
         env:
-          RIVE_PREMAKE_ARGS: "--with_rive_text --with_rive_layout --with_rive_canvas"
+          RIVE_PREMAKE_ARGS: "--with_rive_text --with_rive_layout --with_rive_canvas --with_rive_scripting"
         run: ./scripts/build_rive.sh release
 
       - name: Configure plugin
@@ -81,7 +83,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-macos-${{ steps.rive.outputs.sha }}-v3
+          key: rive-macos-${{ steps.rive.outputs.sha }}-v4
 
       - name: Package macOS plugin
         # Bake the pinned Rive tag into the zip name so downloaders can see
@@ -152,7 +154,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-windows-${{ steps.rive.outputs.sha }}-v3
+          key: rive-windows-${{ steps.rive.outputs.sha }}-v4
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
@@ -160,12 +162,15 @@ jobs:
           # --with_rive_text + --with_rive_layout + --with_rive_canvas: the
           # canvas flag compiles in GPU Canvas (RenderCanvas + Ore, D3D11/D3D12
           # backends on Windows) and matches Rive's own default build flags.
+          # --with_rive_scripting: swap the stub luau_vm for a real Luau VM
+          # (+ libhydrogen). Required for script-driven GPU Canvas content
+          # (the common case in Rive editor authoring) to actually animate.
           # --no-lto: Rive's release config enables LTO on Windows, which
           # makes clang-cl emit LLVM-bitcode-wrapped COFF objs/libs that
           # MSVC's link.exe can't consume - we hit LNK1107 the moment we
           # try to link against rive*.lib from the TDRiveTOP CMake build.
           # Turning LTO off restores standard COFF that link.exe groks.
-          RIVE_PREMAKE_ARGS: "--with_rive_text --with_rive_layout --with_rive_canvas --no-lto"
+          RIVE_PREMAKE_ARGS: "--with_rive_text --with_rive_layout --with_rive_canvas --with_rive_scripting --no-lto"
           # Use ninja instead of vs2022/MSBuild. Rive's MSBuild invocation
           # doesn't pass /m, so projects build serially - ninja is fully
           # parallel and finishes in a fraction of the time on CI.
@@ -173,8 +178,10 @@ jobs:
         # Args after `--` are forwarded to ninja as explicit build targets,
         # so we only build the static libs we actually link. Skipping
         # path_fiddle (the GLFW sample exe) avoids dragging GLFW + the
-        # other fiddle backends into the build.
-        run: scripts\build_rive.bat release -- rive rive_pls_renderer rive_decoders rive_harfbuzz rive_sheenbidi rive_yoga libpng libjpeg libwebp zlib miniaudio
+        # other fiddle backends into the build. luau_vm is produced by
+        # --with_rive_scripting; libhydrogen isn't a standalone project,
+        # its objects are linked directly into librive.
+        run: scripts\build_rive.bat release -- rive rive_pls_renderer rive_decoders rive_harfbuzz rive_sheenbidi rive_yoga libpng libjpeg libwebp zlib miniaudio luau_vm
 
       - name: Configure plugin
         run: cmake -B build -G "Visual Studio 17 2022" -A x64
@@ -190,7 +197,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-windows-${{ steps.rive.outputs.sha }}-v3
+          key: rive-windows-${{ steps.rive.outputs.sha }}-v4
 
       - name: Package Windows plugin
         # Bake the pinned Rive tag into the zip name so downloaders can see
