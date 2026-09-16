@@ -12,7 +12,7 @@ on:
 # rive-app/rive-runtime tag (https://github.com/rive-app/rive-runtime/releases)
 # to move forward deliberately, rather than tracking a moving 'main'.
 env:
-  RIVE_REF: runtime-v0.1.171
+  RIVE_REF: runtime-v0.1.410
 
 # Cancel in-progress runs for the same ref when a new push comes in.
 concurrency:
@@ -84,15 +84,19 @@ jobs:
           key: rive-macos-${{ steps.rive.outputs.sha }}-v3
 
       - name: Package macOS plugin
+        # Bake the pinned Rive tag into the zip name so downloaders can see
+        # at a glance which runtime the plugin was built against.
         run: |
           mkdir -p dist
-          (cd build && zip -r ../dist/TDRive_mac.zip TDRiveTOP.plugin)
+          RIVE_TAG="${RIVE_REF#runtime-}"
+          ZIP="TDRive_mac_rive-${RIVE_TAG}.zip"
+          (cd build && zip -r "../dist/${ZIP}" TDRiveTOP.plugin)
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: TDRive_mac
-          path: dist/TDRive_mac.zip
+          path: dist/TDRive_mac_rive-*.zip
 
   # ---------------------------------------------------------------------------
   windows:
@@ -189,16 +193,20 @@ jobs:
           key: rive-windows-${{ steps.rive.outputs.sha }}-v3
 
       - name: Package Windows plugin
+        # Bake the pinned Rive tag into the zip name so downloaders can see
+        # at a glance which runtime the plugin was built against.
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path build\Release\TDRiveTOP.dll -DestinationPath dist\TDRive_win.zip -Force
+          $riveTag = $env:RIVE_REF -replace '^runtime-', ''
+          $zip = "dist\TDRive_win_rive-$riveTag.zip"
+          Compress-Archive -Path build\Release\TDRiveTOP.dll -DestinationPath $zip -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: TDRive_win
-          path: dist/TDRive_win.zip
+          path: dist/TDRive_win_rive-*.zip
 
   # ---------------------------------------------------------------------------
   release:
@@ -229,10 +237,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release/TDRive_mac.zip
-            release/TDRive_win.zip
+            release/TDRive_mac_rive-*.zip
+            release/TDRive_win_rive-*.zip
           generate_release_notes: true
           fail_on_unmatched_files: true
+          # Prepend which Rive runtime this build was compiled against so
+          # downloaders can correlate plugin behaviour with a rive-runtime
+          # release. The tag is also baked into each zip's filename.
+          body: |
+            Built against [rive-app/rive-runtime@${{ env.RIVE_REF }}](https://github.com/rive-app/rive-runtime/releases/tag/${{ env.RIVE_REF }}).
           # Tags with a semver pre-release suffix (v1.1.0-ea, v2.0.0-rc1, ...)
           # publish as GitHub prereleases instead of full releases.
           prerelease: ${{ contains(github.ref_name, '-') }}
