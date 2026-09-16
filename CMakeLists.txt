@@ -151,54 +151,6 @@ elseif(WIN32)
 endif()
 
 # -----------------------------------------------------------------------------
-# RiveRenderStream: standalone Disguise RenderStream workload (Windows/D3D11).
-#
-# Renders .riv content and bridges it bidirectionally to RenderStream: Rive
-# frames out as DX11 textures, incoming textures in via Rive GPU Canvas. Reuses
-# the same prebuilt Rive static libs as the plugin. Not built on macOS
-# (RenderStream is Windows-only).
-# -----------------------------------------------------------------------------
-if(WIN32)
-    add_executable(RiveRenderStream
-        renderstream/src/Main.cpp
-    )
-
-    target_include_directories(RiveRenderStream PRIVATE
-        "${CMAKE_SOURCE_DIR}/renderstream/src"
-        "${CMAKE_SOURCE_DIR}/renderstream/include"
-        "${RIVE_DIR}/include"
-        "${RIVE_DIR}/renderer/include"
-    )
-
-    target_link_libraries(RiveRenderStream PRIVATE
-        ${RIVE_LIBS}
-        d3d11
-        dxgi
-        dxguid
-        d3dcompiler
-        Shlwapi
-    )
-
-    target_compile_definitions(RiveRenderStream PRIVATE
-        WIN32_LEAN_AND_MEAN
-        NOMINMAX
-        _CRT_SECURE_NO_WARNINGS
-        # The runtime libs are built --with_rive_canvas; render_context.hpp gates
-        # a data member (and the makeRenderCanvas API we call) on RIVE_CANVAS, so
-        # this TU must match the libs' layout. RIVE_ORE follows the canvas flag.
-        RIVE_CANVAS
-        RIVE_ORE
-    )
-
-    if(MSVC)
-        # Match the Rive libs: RTTI off, static CRT.
-        target_compile_options(RiveRenderStream PRIVATE /GR-)
-        set_property(TARGET RiveRenderStream PROPERTY
-            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    endif()
-endif()
-
-# -----------------------------------------------------------------------------
 # Optional: rivinfo-style inspector (scripts/inspect_riv.mm on macOS only).
 # -----------------------------------------------------------------------------
 if(APPLE AND EXISTS "${CMAKE_SOURCE_DIR}/scripts/inspect_riv.mm")
