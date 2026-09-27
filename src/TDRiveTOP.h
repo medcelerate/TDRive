@@ -34,6 +34,7 @@ public:
     void setupParameters(TD::OP_ParameterManager*, void*) override;
     void pulsePressed(const char* name, void*) override;
     void getErrorString(TD::OP_String* error, void*) override;
+    void getWarningString(TD::OP_String* warning, void*) override;
     void buildDynamicMenu(const TD::OP_Inputs*, TD::OP_BuildDynamicMenuInfo*, void*) override;
     int32_t getNumInfoCHOPChans(void*) override;
     void getInfoCHOPChan(int32_t index, TD::OP_InfoCHOPChan* chan, void*) override;
@@ -144,5 +145,20 @@ private:
     rive::RenderImage*   mBoundSlotImage[tdrive::kMaxImageSlots] = {};
     std::vector<uint8_t> mPremulScratch;
 
+    // TouchDesigner can allocate the output smaller than requested (e.g. the
+    // Non-Commercial 1280x1280 cap). In CUDA mode the real size is visible
+    // once the array exists; remember the request->actual pair so later cooks
+    // request the actual size up front instead of reallocating every frame.
+    int32_t mTdClampReqW = 0, mTdClampReqH = 0;
+    int32_t mTdClampW    = 0, mTdClampH    = 0;
+    // What the last cook actually produced, for the Info CHOP.
+    int32_t mOutW = 0, mOutH = 0;
+
+    // CUDA-mode bracket timings (CPU wall-clock ms) for the Info CHOP.
+    double mCudaBeginMs  = 0.0;
+    double mCudaInjectMs = 0.0;
+    double mCudaEndMs    = 0.0;
+
     std::string mError;
+    std::string mWarning;   // cleared every cook
 };

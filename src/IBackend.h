@@ -33,12 +33,19 @@ constexpr int kMaxImageSlots = 4;
 // last completed renderAndReadback(). Surfaced as Info CHOP channels so the
 // cost can be attributed without a profiler - the CPU round-trip dominates at
 // high resolutions and it matters which part of it.
+// CPU wall-clock ms unless noted. In CUDA mode copy/map are the CUDA calls
+// (cudaMemcpy2DArrayToArray / cudaGraphicsMapResources) and memcpy is 0.
 struct ReadbackTimings {
     double renderMs = 0.0;   // beginFrame + draw + flush (GPU work submitted)
-    double copyMs   = 0.0;   // CopyResource GPU -> staging
-    double mapMs    = 0.0;   // Map(READ) - blocks until the GPU catches up
+    double copyMs   = 0.0;   // CopyResource GPU -> staging, or the CUDA copy
+    double mapMs    = 0.0;   // Map(READ) / cudaGraphicsMapResources
     double memcpyMs = 0.0;   // staging -> TouchDesigner's buffer
+    double unmapMs  = 0.0;   // cudaGraphicsUnmapResources (CUDA mode)
     double totalMs  = 0.0;
+    // GPU execution time of the Rive render, from D3D11 timestamp queries read
+    // back a few frames later so they never stall. 0 until a result arrives
+    // and on backends without the queries.
+    double renderGpuMs = 0.0;
 };
 
 class IBackend {

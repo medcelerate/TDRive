@@ -337,6 +337,11 @@ void TDRiveTOP::getErrorString(OP_String* err, void*)
     if (!mError.empty()) err->setString(mError.c_str());
 }
 
+void TDRiveTOP::getWarningString(OP_String* warning, void*)
+{
+    if (!mWarning.empty()) warning->setString(mWarning.c_str());
+}
+
 // =============================================================================
 // Dynamic menus
 // =============================================================================
@@ -418,12 +423,20 @@ void TDRiveTOP::buildDynamicMenu(const OP_Inputs* inputs,
 // registered TOP_ExecuteMode::CUDA (TDRIVE_CUDA=1 and a usable NVIDIA adapter)
 // and 0 for the default CPUMem path - worth having on the node itself, because
 // the env var is set before TouchDesigner launches and there is otherwise no
-// way to tell from inside which mode you ended up in. In CUDA mode the frame
-// never touches the CPU, so the four timing channels all read 0.
+// way to tell from inside which mode you ended up in.
+//
+// In CUDA mode copy_ms / map_ms / unmap_ms time the CUDA interop calls,
+// memcpy_ms is 0, and cuda_begin_ms / cuda_inject_ms / cuda_end_ms time
+// TouchDesigner's beginCUDAOperations(), the input-TOP copies and
+// endCUDAOperations(). render_gpu_ms is the Rive render's own GPU time on our
+// D3D11 device (timestamp queries, both modes) - work TouchDesigner's
+// gpuCookTime cannot see in CPUMem mode. out_w / out_h are the size produced.
 namespace {
 constexpr const char* kInfoChanNames[] = {
     "render_ms", "copy_ms", "map_ms", "memcpy_ms", "readback_total_ms",
     "cuda_mode",
+    "unmap_ms", "cuda_begin_ms", "cuda_inject_ms", "cuda_end_ms",
+    "render_gpu_ms", "out_w", "out_h",
 };
 constexpr int32_t kNumInfoChans =
     (int32_t)(sizeof(kInfoChanNames) / sizeof(kInfoChanNames[0]));
@@ -442,6 +455,8 @@ void TDRiveTOP::getInfoCHOPChan(int32_t index, OP_InfoCHOPChan* chan, void*)
     const double values[] = {
         t.renderMs, t.copyMs, t.mapMs, t.memcpyMs, t.totalMs,
         gCUDAMode ? 1.0 : 0.0,
+        t.unmapMs, mCudaBeginMs, mCudaInjectMs, mCudaEndMs,
+        t.renderGpuMs, (double)mOutW, (double)mOutH,
     };
     // These two lists are indexed by the same 'index'; keep them in step.
     static_assert((int32_t)(sizeof(values) / sizeof(values[0])) == kNumInfoChans,
@@ -1174,6 +1189,7 @@ void TDRiveTOP::computeResolution(const OP_Inputs* inputs,
 
 void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
 {
+    mWarning.clear();
     if (!mBackendReady) {
         std::string err;
         if (!mBackend || !mBackend->init(err)) {
@@ -1200,6 +1216,11 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
     // options are all measured from it), so the file has to be resolved first.
     int32_t resW = 0, resH = 0;
     computeResolution(inputs, resW, resH);
+    const int32_t reqW = resW, reqH = resH;
+    if (gCUDAMode && reqW == mTdClampReqW && reqH == mTdClampReqH) {
+        resW = mTdClampW;
+        resH = mTdClampH;
+    }
     {
         std::string err;
         if (!mBackend->ensureRenderTarget((uint32_t)resW, (uint32_t)resH, err)) {
@@ -1269,26 +1290,28 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
     fd.clearColor = ((uint32_t)a8 << 24) | ((uint32_t)r8 << 16)
                   | ((uint32_t)g8 <<  8) |  (uint32_t)b8;
 
-    auto drawFn = [this, fitIdx, alignIdx, resW, resH](rive::Renderer* r) {
-        if (!mArtboard) return;
-        const rive::Fit fit = FitFromIndex(fitIdx);
-        r->save();
-        if (gCUDAMode) {
-            // The CPU path tells TouchDesigner firstPixel = TopLeft, which is
-            // what makes our top-down D3D11 rows come out the right way up.
-            // TOP_CUDAOutputInfo has no equivalent field, so in CUDA mode TD
-            // reads the array bottom-up and the frame arrives upside down.
-            // Flip the scene about the middle of the render target instead -
-            // it is free, where flipping the texture afterwards is another
-            // full-surface copy.
-            r->transform(rive::Mat2D(1.0f, 0.0f, 0.0f, -1.0f, 0.0f, (float)resH));
-        }
-        r->align(fit,
-                 AlignmentFromIndex(alignIdx),
-                 rive::AABB(0, 0, (float)resW, (float)resH),
-                 artboardFrame(fit == rive::Fit::layout));
-        mArtboard->draw(r);
-        r->restore();
+    auto makeDrawFn = [this, fitIdx, alignIdx](int32_t w, int32_t h) {
+        return [this, fitIdx, alignIdx, w, h](rive::Renderer* r) {
+            if (!mArtboard) return;
+            const rive::Fit fit = FitFromIndex(fitIdx);
+            r->save();
+            if (gCUDAMode) {
+                // The CPU path tells TouchDesigner firstPixel = TopLeft, which
+                // is what makes our top-down D3D11 rows come out the right way
+                // up. TOP_CUDAOutputInfo has no equivalent field, so in CUDA
+                // mode TD reads the array bottom-up and the frame arrives
+                // upside down. Flip the scene about the middle of the render
+                // target instead - it is free, where flipping the texture
+                // afterwards is another full-surface copy.
+                r->transform(rive::Mat2D(1.0f, 0.0f, 0.0f, -1.0f, 0.0f, (float)h));
+            }
+            r->align(fit,
+                     AlignmentFromIndex(alignIdx),
+                     rive::AABB(0, 0, (float)w, (float)h),
+                     artboardFrame(fit == rive::Fit::layout));
+            mArtboard->draw(r);
+            r->restore();
+        };
     };
 
 #if defined(_WIN32)
@@ -1333,11 +1356,58 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
         const OP_CUDAArrayInfo* out = output->createCUDAArray(co, nullptr);
         if (!out) { setError("createCUDAArray failed."); return; }
 
+        using Clock = std::chrono::steady_clock;
+        auto msSince = [](Clock::time_point a) {
+            return std::chrono::duration<double, std::milli>(Clock::now() - a).count();
+        };
+
+        auto tb = Clock::now();
         if (!mContext->beginCUDAOperations(nullptr)) {
             setError("beginCUDAOperations failed.");
             return;
         }
+        mCudaBeginMs = msSince(tb);
 
+        // TouchDesigner may have allocated less than we asked for (the
+        // Non-Commercial license caps TOPs at 1280x1280). Copying our frame
+        // into a smaller array fails with "invalid argument", so render at
+        // the size that actually exists, and remember it for later cooks.
+        int32_t outW = resW, outH = resH;
+        if (const auto* api = tdrive::cuda::Get(); api && out->cudaArray) {
+            tdrive::cuda::ChannelFormatDesc fmt{};
+            tdrive::cuda::Extent ext{};
+            unsigned int flags = 0;
+            if (api->arrayGetInfo(&fmt, &ext, &flags, out->cudaArray) ==
+                    tdrive::cuda::kSuccess && ext.width && ext.height) {
+                outW = (int32_t)ext.width;
+                outH = (int32_t)ext.height;
+            }
+        }
+        if (outW != resW || outH != resH) {
+            std::string err;
+            if (!mBackend->ensureRenderTarget((uint32_t)outW, (uint32_t)outH, err)) {
+                mContext->endCUDAOperations(nullptr);
+                if (!err.empty()) setError(err);
+                return;
+            }
+            mTdClampReqW = reqW;  mTdClampReqH = reqH;
+            mTdClampW    = outW;  mTdClampH    = outH;
+            resW = outW;
+            resH = outH;
+            fd.renderTargetWidth  = (uint32_t)resW;
+            fd.renderTargetHeight = (uint32_t)resH;
+        }
+        if (resW != reqW || resH != reqH) {
+            mWarning = "TouchDesigner limited this TOP to " +
+                       std::to_string(resW) + "x" + std::to_string(resH) +
+                       " (requested " + std::to_string(reqW) + "x" +
+                       std::to_string(reqH) + "), e.g. the Non-Commercial "
+                       "1280x1280 cap. Rendering at the limited size.";
+        }
+        mOutW = resW;
+        mOutH = resH;
+
+        auto ti = Clock::now();
         for (int slot = 0; slot < tdrive::kMaxImageSlots; ++slot) {
             if (!acq[slot].info || !acq[slot].info->cudaArray) continue;
             const auto& desc = acq[slot].info->textureDesc;
@@ -1348,10 +1418,14 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
             if (img) bindSlotImage(slot, acq[slot].prop, img.get());
             else if (!ierr.empty()) setError(ierr);
         }
+        mCudaInjectMs = msSince(ti);
 
         std::string rerr;
-        bool rendered = mBackend->renderToCUDA(fd, drawFn, out->cudaArray, rerr);
+        bool rendered = mBackend->renderToCUDA(fd, makeDrawFn(resW, resH),
+                                               out->cudaArray, rerr);
+        auto te = Clock::now();
         mContext->endCUDAOperations(nullptr);
+        mCudaEndMs = msSince(te);
         if (!rendered && !rerr.empty()) setError(rerr);
         return;
     }
@@ -1365,10 +1439,12 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
         mContext->createOutputBuffer(byteSize, TD::TOP_BufferFlags::None, nullptr);
 
     std::string err;
-    if (!mBackend->renderAndReadback(fd, drawFn, buf->data, err)) {
+    if (!mBackend->renderAndReadback(fd, makeDrawFn(resW, resH), buf->data, err)) {
         if (!err.empty()) setError(err);
         return;
     }
+    mOutW = resW;
+    mOutH = resH;
 
     TD::TOP_UploadInfo up;
     up.textureDesc.width       = (uint32_t)resW;

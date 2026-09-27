@@ -15,6 +15,7 @@
 
 #if defined(_WIN32)
 
+#include <cstddef>
 #include <cstdint>
 
 struct ID3D11Resource;
@@ -31,6 +32,10 @@ namespace tdrive::cuda {
 constexpr cudaError_t  kSuccess                  = 0;
 constexpr unsigned int kGraphicsRegisterFlagsNone = 0;
 constexpr int          kMemcpyDeviceToDevice      = 3;
+
+// ABI mirrors of cudaChannelFormatDesc / cudaExtent (driver_types.h).
+struct ChannelFormatDesc { int x, y, z, w; int f; };
+struct Extent            { size_t width, height, depth; };
 
 // Loads cudart (idempotent). Returns false if no cudart / no CUDA device.
 bool Load();
@@ -74,6 +79,9 @@ struct Api {
         cudaArray* dst, size_t wOffsetDst, size_t hOffsetDst,
         const cudaArray* src, size_t wOffsetSrc, size_t hOffsetSrc,
         size_t widthBytes, size_t height, int kind);
+    // The real allocated extent of a cudaArray, in elements.
+    cudaError_t (*arrayGetInfo)(ChannelFormatDesc* desc, Extent* extent,
+                                unsigned int* flags, cudaArray* array);
     const char* (*getErrorString)(cudaError_t err);
 };
 

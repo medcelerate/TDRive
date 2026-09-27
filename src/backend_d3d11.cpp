@@ -128,6 +128,17 @@ public:
             mDevice.Reset();
             return false;
         }
+
+        // Diagnostics only: if any query fails to create, renderGpuMs stays 0.
+        D3D11_QUERY_DESC dj{D3D11_QUERY_TIMESTAMP_DISJOINT, 0};
+        D3D11_QUERY_DESC ts{D3D11_QUERY_TIMESTAMP, 0};
+        for (auto& t : mGpuTimers) {
+            if (FAILED(mDevice->CreateQuery(&dj, &t.disjoint)) ||
+                FAILED(mDevice->CreateQuery(&ts, &t.begin)) ||
+                FAILED(mDevice->CreateQuery(&ts, &t.end))) {
+                t = GpuTimer{};
+            }
+        }
         return true;
     }
 
@@ -310,11 +321,13 @@ public:
             return false;
         }
 
+        const auto t0 = Clock::now();
         renderFrame(fd, draw);
         // Make sure the D3D work is submitted before CUDA touches the
         // texture. cudaGraphicsMapResources synchronizes with the device,
         // but only against submitted work.
         mContext->Flush();
+        const auto t1 = Clock::now();
 
         cudaError_t ce = api->graphicsMapResources(1, &mTargetCudaRes, nullptr);
         if (ce != cuda::kSuccess) {
@@ -322,6 +335,7 @@ public:
                   api->getErrorString(ce);
             return false;
         }
+        const auto t2 = Clock::now();
         cudaArray* srcArray = nullptr;
         ce = api->graphicsSubResourceGetMappedArray(&srcArray,
                                                     mTargetCudaRes, 0, 0);
@@ -330,7 +344,19 @@ public:
                 (cudaArray*)dstCudaArray, 0, 0, srcArray, 0, 0,
                 (size_t)mW * 4, (size_t)mH, cuda::kMemcpyDeviceToDevice);
         }
+        const auto t3 = Clock::now();
         api->graphicsUnmapResources(1, &mTargetCudaRes, nullptr);
+        const auto t4 = Clock::now();
+
+        auto ms = [](Clock::time_point a, Clock::time_point b) {
+            return std::chrono::duration<double, std::milli>(b - a).count();
+        };
+        mTimings.renderMs = ms(t0, t1);
+        mTimings.mapMs    = ms(t1, t2);
+        mTimings.copyMs   = ms(t2, t3);
+        mTimings.unmapMs  = ms(t3, t4);
+        mTimings.memcpyMs = 0.0;
+        mTimings.totalMs  = ms(t0, t4);
 
         if (ce != cuda::kSuccess) {
             err = std::string("CUDA target copy failed: ") +
@@ -405,6 +431,16 @@ private:
     void renderFrame(const rive::gpu::RenderContext::FrameDescriptor& fd,
                      const std::function<void(rive::Renderer*)>&      draw)
     {
+        collectGpuTimers();
+        GpuTimer& t = mGpuTimers[mGpuTimerIdx];
+        mGpuTimerIdx = (mGpuTimerIdx + 1) % kNumGpuTimers;
+        // A set whose result hasn't come back yet is skipped, not waited on.
+        const bool timed = t.disjoint.Get() != nullptr && !t.pending;
+        if (timed) {
+            mContext->Begin(t.disjoint.Get());
+            mContext->End(t.begin.Get());
+        }
+
         mRenderTarget->setTargetTexture(mTarget);
         mRenderContext->beginFrame(fd);
         rive::RiveRenderer renderer(mRenderContext.get());
@@ -413,6 +449,29 @@ private:
         flush.renderTarget = mRenderTarget.get();
         flush.externalCommandBuffer = nullptr;
         mRenderContext->flush(flush);
+
+        if (timed) {
+            mContext->End(t.end.Get());
+            mContext->End(t.disjoint.Get());
+            t.pending = true;
+        }
+    }
+
+    void collectGpuTimers()
+    {
+        for (auto& t : mGpuTimers) {
+            if (!t.pending) continue;
+            constexpr UINT kNoFlush = D3D11_ASYNC_GETDATA_DONOTFLUSH;
+            D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj{};
+            UINT64 b = 0, e = 0;
+            if (mContext->GetData(t.disjoint.Get(), &dj, sizeof(dj), kNoFlush) != S_OK ||
+                mContext->GetData(t.begin.Get(), &b, sizeof(b), kNoFlush) != S_OK ||
+                mContext->GetData(t.end.Get(), &e, sizeof(e), kNoFlush) != S_OK)
+                continue;
+            t.pending = false;
+            if (!dj.Disjoint && dj.Frequency && e >= b)
+                mTimings.renderGpuMs = (double)(e - b) * 1000.0 / (double)dj.Frequency;
+        }
     }
 
     bool ensureSlotTexture(int slot, uint32_t w, uint32_t h, std::string& err)
@@ -484,6 +543,14 @@ private:
     bool                         mStagingPending = false;
     cudaGraphicsResource_t       mTargetCudaRes = nullptr;
     uint32_t                     mW = 0, mH = 0;
+
+    struct GpuTimer {
+        ComPtr<ID3D11Query> disjoint, begin, end;
+        bool                pending = false;
+    };
+    static constexpr int kNumGpuTimers = 4;
+    GpuTimer mGpuTimers[kNumGpuTimers];
+    int      mGpuTimerIdx = 0;
 
     Slot mSlots[kMaxImageSlots];
 
