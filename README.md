@@ -221,16 +221,17 @@ feed artwork inside the .riv.
 
 Transport:
 
-- **Default (all platforms)**: a CPU download path (one frame of latency on
-  injected textures, imperceptible in most setups). On Windows the rendered
-  frame is read back through double-buffered staging, which also adds one
-  frame of output latency in exchange for not stalling on the GPU.
-- **Windows + NVIDIA, opt-in**: set the environment variable
-  `TDRIVE_CUDA=1` before launching TouchDesigner to register the plugin in
-  CUDA execute mode, where textures move GPU→GPU in both directions with
-  **zero CPU copies**. Input TOPs must be RGBA 8-bit. The mode applies to
-  every Rive TOP in the process. The Info CHOP's `cuda_mode` channel shows
-  which mode loaded.
+- **Windows + NVIDIA (default there)**: the plugin registers in CUDA
+  execute mode, where textures move GPU→GPU in both directions with **zero
+  CPU copies**. Input TOPs must be RGBA 8-bit. The mode applies to every
+  Rive TOP in the process. To opt out, set the environment variable
+  `TDRIVE_CUDA=0` before launching TouchDesigner. The Info CHOP's
+  `cuda_mode` channel shows which mode loaded.
+- **macOS, Windows without NVIDIA, or `TDRIVE_CUDA=0`**: a CPU download
+  path (one frame of latency on injected textures, imperceptible in most
+  setups). On Windows the rendered frame is read back through double-buffered
+  staging, which also adds one frame of output latency in exchange for not
+  stalling on the GPU.
 
   In the Performance Monitor a node in CUDA mode shows ~5 ms of GPU cook time
   at 60 fps. That is TouchDesigner's GPU timer spanning an interop wait, not

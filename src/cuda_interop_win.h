@@ -56,15 +56,15 @@ bool Load();
 // this is what decides TOP_ExecuteMode.
 bool AvailableForD3D11();
 
-// True when TDRIVE_CUDA is set to something other than "0" / "false" / "off".
+// False only when TDRIVE_CUDA is "0" / "false" / "off" - the opt-out.
 //
-// CUDA execute mode is OPT-IN, and process-wide: it is decided at load time
-// for every Rive TOP. At 60 fps TD reports ~5 ms gpuCookTime per node in this
-// mode, but that timer spans an interop wait: our CUDA calls are ~0.5 ms, the
-// Rive render ~0.15 ms, and uncapped with 1-8 nodes throughput matched or beat
-// CPUMem with less CPU cook time (RTX 2070 SUPER, TD 2025.30280). A dedicated
-// CUDA stream made no difference.
-bool EnabledByEnv();
+// CUDA execute mode is the default wherever it is available, and process-wide:
+// it is decided at load time for every Rive TOP. At 60 fps TD reports ~4-5 ms
+// gpuCookTime per node in this mode, but a bare CUDA-mode TOP that writes
+// nothing reports ~4.2 ms too - it is TD's CUDA bracket timing a wait. Our CUDA
+// calls are ~0.5 ms, and uncapped with 1-8 nodes throughput matched or beat
+// CPUMem with 25-30% less CPU cook time (RTX 2070 SUPER, TD 2025.30280).
+bool AllowedByEnv();
 
 // Picks the DXGI adapter (by EnumAdapters ordinal) that maps to a CUDA
 // device. Returns -1 if none.

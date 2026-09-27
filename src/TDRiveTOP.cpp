@@ -420,8 +420,8 @@ void TDRiveTOP::buildDynamicMenu(const OP_Inputs* inputs,
 // The CPU round-trip (render -> staging -> map -> memcpy -> hand to TD) is the
 // dominant cost at high resolutions, and these channels say which part of it so
 // the attribution doesn't have to be guessed. cuda_mode is 1 when the plugin
-// registered TOP_ExecuteMode::CUDA (TDRIVE_CUDA=1 and a usable NVIDIA adapter)
-// and 0 for the default CPUMem path - worth having on the node itself, because
+// registered TOP_ExecuteMode::CUDA (a usable NVIDIA adapter, TDRIVE_CUDA not 0)
+// and 0 for the CPUMem path - worth having on the node itself, because
 // the env var is set before TouchDesigner launches and there is otherwise no
 // way to tell from inside which mode you ended up in.
 //
@@ -1782,12 +1782,11 @@ TD_VIS DLLEXPORT void FillTOPPluginInfo(TD::TOP_PluginInfo* info)
 {
     info->apiVersion  = TD::TOPCPlusPlusAPIVersion;
 
-    // CPUMem everywhere by default; CUDA execute mode is opt-in behind
-    // TDRIVE_CUDA=1 because it costs every Rive TOP a CUDA bracket per cook,
-    // injecting or not. See cuda_interop_win.h.
+    // CUDA execute mode wherever an NVIDIA adapter supports D3D11 interop,
+    // unless TDRIVE_CUDA=0 opts out; CPUMem otherwise. See cuda_interop_win.h.
     info->executeMode = TD::TOP_ExecuteMode::CPUMem;
 #if defined(_WIN32)
-    if (tdrive::cuda::EnabledByEnv() && tdrive::cuda::AvailableForD3D11()) {
+    if (tdrive::cuda::AllowedByEnv() && tdrive::cuda::AvailableForD3D11()) {
         info->executeMode = TD::TOP_ExecuteMode::CUDA;
         gCUDAMode = true;
     }
