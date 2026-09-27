@@ -345,3 +345,52 @@ if(APPLE AND EXISTS "${CMAKE_SOURCE_DIR}/scripts/inspect_riv.mm")
         "-framework ImageIO"
     )
 endif()
+
+# -----------------------------------------------------------------------------
+# Texture injection round-trip test: drives the platform backend (Metal, or
+# D3D11 + the CUDA path on Windows) against tests/texture_io/texture_io.riv.
+#   ctest --test-dir build [-C Release]
+#   build/texture_io_test tests/texture_io/texture_io.riv [cpu|cuda|all]
+# -----------------------------------------------------------------------------
+if(EXISTS "${CMAKE_SOURCE_DIR}/tests/texture_io/texture_io_test.cpp")
+    if(APPLE)
+        add_executable(texture_io_test
+            tests/texture_io/texture_io_test.cpp
+            src/backend_metal.mm)
+        # -fno-rtti to match the plugin and the Rive libs (see the note above
+        # the TDRiveTOP flags); the backends subclass rive types.
+        target_compile_options(texture_io_test PRIVATE
+            -fno-rtti
+            $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+        target_link_libraries(texture_io_test PRIVATE
+            ${RIVE_LIBS}
+            "-framework Foundation"
+            "-framework CoreFoundation"
+            "-framework Metal"
+            "-framework QuartzCore"
+            "-framework CoreGraphics"
+            "-framework CoreText"
+            "-framework ImageIO"
+        )
+    elseif(WIN32)
+        add_executable(texture_io_test
+            tests/texture_io/texture_io_test.cpp
+            src/backend_d3d11.cpp
+            src/cuda_interop_win.cpp)
+        target_compile_options(texture_io_test PRIVATE /GR-)
+        target_compile_definitions(texture_io_test PRIVATE
+            NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+        target_link_libraries(texture_io_test PRIVATE
+            ${RIVE_LIBS} d3d11 dxgi dxguid d3dcompiler psapi)
+        set_property(TARGET texture_io_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+    target_include_directories(texture_io_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/src"
+        "${RIVE_DIR}/include"
+        "${RIVE_DIR}/renderer/include"
+    )
+    enable_testing()
+    add_test(NAME texture_io
+             COMMAND texture_io_test "${CMAKE_SOURCE_DIR}/tests/texture_io/texture_io.riv")
+endif()
