@@ -234,7 +234,8 @@ Transport:
 
   In the Performance Monitor a node in CUDA mode shows ~5 ms of GPU cook time
   at 60 fps. That is TouchDesigner's GPU timer spanning an interop wait, not
-  work: measured uncapped on an RTX 2070 SUPER with 1–8 nodes, CUDA mode
+  work: a bare CUDA-mode TOP that writes nothing shows ~4.2 ms too, and
+  measured uncapped on an RTX 2070 SUPER with 1–8 nodes, CUDA mode
   matched or beat the default mode's frame rate (475 vs 390 fps with one
   node, equal at 4 and 8), used 25–30% less CPU cook time, had steadier frame
   times, and has no extra frame of latency.
