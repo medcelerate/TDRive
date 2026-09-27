@@ -52,6 +52,10 @@ public:
     {
         unregisterTargetCUDA();
         for (auto& s : mSlots) releaseSlot(s);
+        if (mStream) {
+            if (const auto* api = cuda::Get()) api->streamDestroy(mStream);
+            mStream = nullptr;
+        }
         if (mRenderContext) {
             mRenderContext->releaseResources();
             mRenderContext.reset();
@@ -146,6 +150,18 @@ public:
     rive::gpu::RenderContext* renderContext() override { return mRenderContext.get(); }
 
     bool cudaInterop() const override { return mCUDAMode; }
+
+    // A dedicated non-blocking stream, declared to TouchDesigner, instead of
+    // the legacy default stream - which implicitly serializes with every
+    // other blocking stream in the process, TouchDesigner's own included.
+    void* cudaStream() const override { return mStream; }
+
+    void ensureCudaStream() override
+    {
+        if (!mCUDAMode || mStream) return;
+        if (const auto* api = cuda::Get())
+            api->streamCreateWithFlags(&mStream, cuda::kStreamNonBlocking);
+    }
 
     bool ensureRenderTarget(uint32_t w, uint32_t h, std::string& err) override
     {
@@ -329,7 +345,7 @@ public:
         mContext->Flush();
         const auto t1 = Clock::now();
 
-        cudaError_t ce = api->graphicsMapResources(1, &mTargetCudaRes, nullptr);
+        cudaError_t ce = api->graphicsMapResources(1, &mTargetCudaRes, mStream);
         if (ce != cuda::kSuccess) {
             err = std::string("cudaGraphicsMapResources(target) failed: ") +
                   api->getErrorString(ce);
@@ -340,12 +356,10 @@ public:
         ce = api->graphicsSubResourceGetMappedArray(&srcArray,
                                                     mTargetCudaRes, 0, 0);
         if (ce == cuda::kSuccess && srcArray) {
-            ce = api->memcpy2DArrayToArray(
-                (cudaArray*)dstCudaArray, 0, 0, srcArray, 0, 0,
-                (size_t)mW * 4, (size_t)mH, cuda::kMemcpyDeviceToDevice);
+            ce = copyArray(api, (cudaArray*)dstCudaArray, srcArray, mW, mH);
         }
         const auto t3 = Clock::now();
-        api->graphicsUnmapResources(1, &mTargetCudaRes, nullptr);
+        api->graphicsUnmapResources(1, &mTargetCudaRes, mStream);
         const auto t4 = Clock::now();
 
         auto ms = [](Clock::time_point a, Clock::time_point b) {
@@ -397,7 +411,7 @@ public:
             }
         }
 
-        cudaError_t ce = api->graphicsMapResources(1, &s.cudaRes, nullptr);
+        cudaError_t ce = api->graphicsMapResources(1, &s.cudaRes, mStream);
         if (ce != cuda::kSuccess) {
             err = std::string("cudaGraphicsMapResources(image) failed: ") +
                   api->getErrorString(ce);
@@ -406,11 +420,9 @@ public:
         cudaArray* dstArray = nullptr;
         ce = api->graphicsSubResourceGetMappedArray(&dstArray, s.cudaRes, 0, 0);
         if (ce == cuda::kSuccess && dstArray) {
-            ce = api->memcpy2DArrayToArray(
-                dstArray, 0, 0, (cudaArray*)srcCudaArray, 0, 0,
-                (size_t)w * 4, (size_t)h, cuda::kMemcpyDeviceToDevice);
+            ce = copyArray(api, dstArray, (cudaArray*)srcCudaArray, w, h);
         }
-        api->graphicsUnmapResources(1, &s.cudaRes, nullptr);
+        api->graphicsUnmapResources(1, &s.cudaRes, mStream);
 
         if (ce != cuda::kSuccess) {
             err = std::string("CUDA image copy failed: ") +
@@ -523,6 +535,18 @@ private:
         s.w = s.h = 0;
     }
 
+    // RGBA8 array -> array on mStream. Extent is in elements for arrays.
+    cudaError_t copyArray(const cuda::Api* api, cudaArray* dst, cudaArray* src,
+                          uint32_t w, uint32_t h)
+    {
+        cuda::Memcpy3DParms p{};
+        p.srcArray = src;
+        p.dstArray = dst;
+        p.extent   = {w, h, 1};
+        p.kind     = cuda::kMemcpyDeviceToDevice;
+        return api->memcpy3DAsync(&p, mStream);
+    }
+
     void unregisterTargetCUDA()
     {
         if (mTargetCudaRes) {
@@ -542,6 +566,7 @@ private:
     int                          mStagingIdx     = 0;
     bool                         mStagingPending = false;
     cudaGraphicsResource_t       mTargetCudaRes = nullptr;
+    cudaStream_t                 mStream = nullptr;
     uint32_t                     mW = 0, mH = 0;
 
     struct GpuTimer {
