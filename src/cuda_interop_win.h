@@ -49,9 +49,11 @@ bool AvailableForD3D11();
 // True when TDRIVE_CUDA is set to something other than "0" / "false" / "off".
 //
 // CUDA execute mode is OPT-IN. The execute mode is a process-wide, load-time
-// decision, so every cook of every Rive TOP pays the begin/endCUDAOperations
-// bracket, a D3D11 flush and a CUDA map/unmap round trip whether or not it
-// injects a texture - measured 9.5 ms against 1.2 ms on the same .riv.
+// decision, so every Rive TOP pays for it whether or not it injects a texture.
+// Measured on an RTX 2070 SUPER (TD 2025.30280): ~5 ms of TD gpuCookTime per
+// node at any resolution, of which our own CUDA calls are ~0.5 ms and the Rive
+// render ~0.15 ms - the rest is TouchDesigner's interop, and moving our work to
+// a dedicated stream did not change it.
 bool EnabledByEnv();
 
 // Picks the DXGI adapter (by EnumAdapters ordinal) that maps to a CUDA
