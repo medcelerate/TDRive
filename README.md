@@ -229,12 +229,15 @@ Transport:
   `TDRIVE_CUDA=1` before launching TouchDesigner to register the plugin in
   CUDA execute mode, where textures move GPU→GPU in both directions with
   **zero CPU copies**. Input TOPs must be RGBA 8-bit. The mode applies to
-  every Rive TOP in the process and adds a fixed ~5 ms of GPU cook time to
-  each one regardless of resolution (measured on an RTX 2070 SUPER; CPU cook
-  time is unchanged). Only ~0.5 ms of that is the plugin's own CUDA work; the
-  rest is TouchDesigner's CUDA interop. Enable it only when you inject large
-  or many textures. The Info CHOP's `cuda_mode` channel shows which mode
-  loaded.
+  every Rive TOP in the process. The Info CHOP's `cuda_mode` channel shows
+  which mode loaded.
+
+  In the Performance Monitor a node in CUDA mode shows ~5 ms of GPU cook time
+  at 60 fps. That is TouchDesigner's GPU timer spanning an interop wait, not
+  work: measured uncapped on an RTX 2070 SUPER with 1–8 nodes, CUDA mode
+  matched or beat the default mode's frame rate (475 vs 390 fps with one
+  node, equal at 4 and 8), used 25–30% less CPU cook time, had steadier frame
+  times, and has no extra frame of latency.
 
 The node's Info CHOP breaks the cost down per cook (milliseconds):
 `render_ms`, `copy_ms`, `map_ms`, `memcpy_ms`, `readback_total_ms`, plus in
