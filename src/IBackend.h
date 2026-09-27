@@ -99,6 +99,17 @@ public:
     // CPU round-trip.
     virtual bool cudaInterop() const { return false; }
 
+    // The cudaStream_t all CUDA work of the NEXT bracket runs on, to be
+    // declared to TouchDesigner (TOP_CUDAOutputInfo / OP_CUDAAcquireInfo
+    // ::stream) before beginCUDAOperations. nullptr (the legacy default
+    // stream) until ensureCudaStream() has run once.
+    virtual void* cudaStream() const { return nullptr; }
+
+    // Create the dedicated stream if it doesn't exist yet. Call inside the
+    // CUDA bracket, after this cook's CUDA work, so the stream in use always
+    // matches the one declared to TouchDesigner for that cook.
+    virtual void ensureCudaStream() {}
+
     // Same contract as updateImageSlot, but the source pixels come from a
     // cudaArray* (RGBA8, as handed out by TouchDesigner in CUDA execute mode).
     // Must be called between OP_Context::beginCUDAOperations/end.

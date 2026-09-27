@@ -1327,6 +1327,9 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
             const char*             prop = nullptr;
         };
         SlotAcq acq[tdrive::kMaxImageSlots];
+        // Declared on every array TD hands us, so TD orders its Vulkan work
+        // against our stream rather than the legacy default stream.
+        const auto stream = static_cast<cudaStream_t>(mBackend->cudaStream());
         if (ok) {
             for (int slot = 0; slot < tdrive::kMaxImageSlots; ++slot) {
                 char parName[16];
@@ -1341,12 +1344,14 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
                     continue;
                 }
                 OP_CUDAAcquireInfo acquire;
+                acquire.stream = stream;
                 acq[slot].info = top->getCUDAArray(acquire, nullptr);
                 acq[slot].prop = prop;
             }
         }
 
         TOP_CUDAOutputInfo co;
+        co.stream                  = stream;
         co.textureDesc.width       = (uint32_t)resW;
         co.textureDesc.height      = (uint32_t)resH;
         co.textureDesc.depth       = 1;
@@ -1423,6 +1428,8 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
         std::string rerr;
         bool rendered = mBackend->renderToCUDA(fd, makeDrawFn(resW, resH),
                                                out->cudaArray, rerr);
+        // First cook only: creates the stream the next cook declares and uses.
+        mBackend->ensureCudaStream();
         auto te = Clock::now();
         mContext->endCUDAOperations(nullptr);
         mCudaEndMs = msSince(te);

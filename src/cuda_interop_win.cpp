@@ -83,7 +83,9 @@ bool Load()
     ok &= Resolve(m, "cudaGraphicsUnmapResources", gApi.graphicsUnmapResources);
     ok &= Resolve(m, "cudaGraphicsSubResourceGetMappedArray",
                   gApi.graphicsSubResourceGetMappedArray);
-    ok &= Resolve(m, "cudaMemcpy2DArrayToArray",   gApi.memcpy2DArrayToArray);
+    ok &= Resolve(m, "cudaMemcpy3DAsync",          gApi.memcpy3DAsync);
+    ok &= Resolve(m, "cudaStreamCreateWithFlags",  gApi.streamCreateWithFlags);
+    ok &= Resolve(m, "cudaStreamDestroy",          gApi.streamDestroy);
     ok &= Resolve(m, "cudaArrayGetInfo",           gApi.arrayGetInfo);
     ok &= Resolve(m, "cudaGetErrorString",         gApi.getErrorString);
     if (!ok) return false;

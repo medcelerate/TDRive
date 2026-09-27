@@ -33,9 +33,19 @@ constexpr cudaError_t  kSuccess                  = 0;
 constexpr unsigned int kGraphicsRegisterFlagsNone = 0;
 constexpr int          kMemcpyDeviceToDevice      = 3;
 
-// ABI mirrors of cudaChannelFormatDesc / cudaExtent (driver_types.h).
+constexpr unsigned int kStreamNonBlocking         = 0x01;
+
+// ABI mirrors of the driver_types.h structs we pass by pointer.
 struct ChannelFormatDesc { int x, y, z, w; int f; };
 struct Extent            { size_t width, height, depth; };
+struct Pos               { size_t x, y, z; };
+struct PitchedPtr        { void* ptr; size_t pitch, xsize, ysize; };
+struct Memcpy3DParms {
+    cudaArray*  srcArray; Pos srcPos; PitchedPtr srcPtr;
+    cudaArray*  dstArray; Pos dstPos; PitchedPtr dstPtr;
+    Extent      extent;   // in elements when either side is an array
+    int         kind;
+};
 
 // Loads cudart (idempotent). Returns false if no cudart / no CUDA device.
 bool Load();
@@ -77,10 +87,12 @@ struct Api {
     cudaError_t (*graphicsSubResourceGetMappedArray)(
         cudaArray** array, cudaGraphicsResource_t resource,
         unsigned int arrayIndex, unsigned int mipLevel);
-    cudaError_t (*memcpy2DArrayToArray)(
-        cudaArray* dst, size_t wOffsetDst, size_t hOffsetDst,
-        const cudaArray* src, size_t wOffsetSrc, size_t hOffsetSrc,
-        size_t widthBytes, size_t height, int kind);
+    // cudaMemcpy2DArrayToArray has no stream variant; this is the one
+    // array-to-array copy that takes a stream.
+    cudaError_t (*memcpy3DAsync)(const Memcpy3DParms* p, cudaStream_t stream);
+    cudaError_t (*streamCreateWithFlags)(cudaStream_t* stream,
+                                         unsigned int flags);
+    cudaError_t (*streamDestroy)(cudaStream_t stream);
     // The real allocated extent of a cudaArray, in elements.
     cudaError_t (*arrayGetInfo)(ChannelFormatDesc* desc, Extent* extent,
                                 unsigned int* flags, cudaArray* array);
