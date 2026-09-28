@@ -247,9 +247,10 @@ CUDA mode `unmap_ms`, `cuda_begin_ms`, `cuda_inject_ms` and `cuda_end_ms`.
 `render_gpu_ms` is Rive's own GPU render time (Windows), and `out_w` /
 `out_h` the size actually produced.
 
-Note: Rive samples images as **premultiplied alpha**. The CPU path
-premultiplies for you; in CUDA mode, premultiply upstream (e.g. a
-Composite/Reorder TOP) if your input has transparency.
+Note: Rive samples images as **premultiplied alpha**, which is what TOPs
+already carry, so input pixels are passed through unchanged in both modes. A
+TOP whose alpha is not premultiplied (e.g. unpremultiplied with a Level TOP)
+will come out too bright at its transparent edges.
 
 ## How it works
 

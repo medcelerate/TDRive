@@ -67,9 +67,8 @@ void check(bool ok, const std::string& what)
     else     {              std::printf("  ok    %s\n", what.c_str()); }
 }
 
-// Straight RGBA8 -> premultiplied, as TDRiveTOP::applyImageInputsCPU does. In
-// CUDA mode the plugin does no premultiply, so the test does it upstream, the
-// way the README tells users to.
+// Straight RGBA8 -> premultiplied. TouchDesigner's TOPs are premultiplied, so
+// this stands in for what a TOP hands the plugin; the plugin passes it through.
 std::vector<uint8_t> premultiplied(std::vector<uint8_t> px)
 {
     for (size_t i = 0; i < px.size(); i += 4) {
@@ -259,8 +258,14 @@ struct CudaTransport : Transport {
             }
             s.w = w; s.h = h;
         }
+        // TouchDesigner's cudaArrays start at the bottom row; the backend
+        // flips them back. Upload the same way so that flip is under test.
         auto pm = premultiplied(straight);
-        if (api.memcpy2DToArray(s.arr, 0, 0, pm.data(), (size_t)w * 4, (size_t)w * 4, h,
+        std::vector<uint8_t> bottomUp(pm.size());
+        const size_t row = (size_t)w * 4;
+        for (uint32_t y = 0; y < h; ++y)
+            std::memcpy(&bottomUp[(size_t)(h - 1 - y) * row], &pm[(size_t)y * row], row);
+        if (api.memcpy2DToArray(s.arr, 0, 0, bottomUp.data(), row, row, h,
                                 kHostToDevice) != 0) {
             std::printf("  cudaMemcpy2DToArray failed\n");
             return nullptr;

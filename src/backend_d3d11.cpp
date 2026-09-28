@@ -400,9 +400,24 @@ public:
         if (!ensureSlotTexture(slot, w, h, err)) return nullptr;
         Slot& s = mSlots[slot];
 
+        // TouchDesigner's cudaArray starts at the bottom row and Rive samples
+        // top row first, so CUDA copies into a landing texture and the rows
+        // are flipped into the slot texture below. An array-to-array copy
+        // can't reverse rows itself.
+        if (!s.landing) {
+            D3D11_TEXTURE2D_DESC d{};
+            s.tex->GetDesc(&d);
+            HRESULT hr = mDevice->CreateTexture2D(
+                &d, nullptr, s.landing.ReleaseAndGetAddressOf());
+            if (FAILED(hr) || !s.landing) {
+                err = "Failed to allocate D3D11 landing texture.";
+                return nullptr;
+            }
+        }
+
         if (!s.cudaRes) {
             cudaError_t ce = api->graphicsD3D11RegisterResource(
-                &s.cudaRes, s.tex.Get(), cuda::kGraphicsRegisterFlagsNone);
+                &s.cudaRes, s.landing.Get(), cuda::kGraphicsRegisterFlagsNone);
             if (ce != cuda::kSuccess) {
                 err = std::string("cudaGraphicsD3D11RegisterResource(image) "
                                   "failed: ") + api->getErrorString(ce);
@@ -429,12 +444,23 @@ public:
                   api->getErrorString(ce);
             return nullptr;
         }
+
+        // Unmap orders the CUDA copy before later D3D11 work on the landing
+        // texture, so these GPU-side row copies see the new frame.
+        for (uint32_t y = 0; y < h; ++y) {
+            const D3D11_BOX row{0, y, 0, w, y + 1, 1};
+            mContext->CopySubresourceRegion(s.tex.Get(), 0, 0, h - 1 - y, 0,
+                                            s.landing.Get(), 0, &row);
+        }
         return s.img;
     }
 
 private:
     struct Slot {
         ComPtr<ID3D11Texture2D>       tex;
+        // CUDA-mode only: where TD's (bottom-up) frame lands before the
+        // row flip into 'tex'. Registered with CUDA as cudaRes.
+        ComPtr<ID3D11Texture2D>       landing;
         rive::rcp<rive::RenderImage>  img;
         uint32_t                      w = 0, h = 0;
         cudaGraphicsResource_t        cudaRes = nullptr;
@@ -531,6 +557,7 @@ private:
             s.cudaRes = nullptr;
         }
         s.img.reset();
+        s.landing.Reset();
         s.tex.Reset();
         s.w = s.h = 0;
     }

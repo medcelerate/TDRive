@@ -143,7 +143,6 @@ private:
     // we only rebind on identity change.
     TD::OP_SmartRef<TD::OP_TOPDownloadResult> mPendingDl[tdrive::kMaxImageSlots];
     rive::RenderImage*   mBoundSlotImage[tdrive::kMaxImageSlots] = {};
-    std::vector<uint8_t> mPremulScratch;
 
     // TouchDesigner can allocate the output smaller than requested (e.g. the
     // Non-Commercial 1280x1280 cap). In CUDA mode the real size is visible

@@ -155,20 +155,6 @@ bool dat_value_truthy(const std::string& s)
     try { return std::stof(s) > 0.0f; } catch (...) { return false; }
 }
 
-// Rive samples images as premultiplied alpha (its decoders premultiply on
-// load), so injected straight-alpha pixels from TD get premultiplied here.
-// Fully-opaque pixels are left untouched.
-void premultiply_rgba(uint8_t* p, size_t pixelCount)
-{
-    for (size_t i = 0; i < pixelCount; ++i, p += 4) {
-        const uint32_t a = p[3];
-        if (a == 255) continue;
-        p[0] = (uint8_t)((p[0] * a + 127) / 255);
-        p[1] = (uint8_t)((p[1] * a + 127) / 255);
-        p[2] = (uint8_t)((p[2] * a + 127) / 255);
-    }
-}
-
 // True when the plugin registered with TOP_ExecuteMode::CUDA (decided once
 // at DLL load in FillTOPPluginInfo; Windows + NVIDIA only).
 bool gCUDAMode = false;
@@ -1039,21 +1025,22 @@ void TDRiveTOP::applyImageInputsCPU(const OP_Inputs* inputs)
             const uint32_t h = mPendingDl[slot]->textureDesc.height;
             void* data = mPendingDl[slot]->getData();
             if (data && w > 0 && h > 0) {
-                const size_t bytes = (size_t)w * h * 4;
-                mPremulScratch.resize(bytes);
-                std::memcpy(mPremulScratch.data(), data, bytes);
-                premultiply_rgba(mPremulScratch.data(), (size_t)w * h);
+                // TOPs are already premultiplied, which is what Rive samples,
+                // so the pixels go up as downloaded.
                 std::string err;
                 auto img = mBackend->updateImageSlot(
-                    slot, w, h, mPremulScratch.data(), err);
+                    slot, w, h, static_cast<const uint8_t*>(data), err);
                 if (img) bindSlotImage(slot, prop, img.get());
                 else if (!err.empty()) setError(err);
             }
         }
 
         // Kick off this cook's download (RGBA8, converted by TD if needed).
+        // TD textures start at the bottom row; updateImageSlot wants the top
+        // row first, so have TD flip it during the download.
         TD::OP_TOPInputDownloadOptions opts;
         opts.pixelFormat = TD::OP_PixelFormat::RGBA8Fixed;
+        opts.verticalFlip = true;
         mPendingDl[slot] = top->downloadTexture(opts, nullptr);
     }
 }
