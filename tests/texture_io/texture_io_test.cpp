@@ -30,6 +30,7 @@
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <utility>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -260,7 +261,12 @@ struct CudaTransport : Transport {
         }
         // TouchDesigner's cudaArrays start at the bottom row; the backend
         // flips them back. Upload the same way so that flip is under test.
+        // TD hands 8-bit TOPs over as BGRA; even slots upload BGRA and odd
+        // slots RGBA, so the quad scene covers both channel orders.
+        const bool bgra = (slot % 2) == 0;
         auto pm = premultiplied(straight);
+        if (bgra)
+            for (size_t i = 0; i < pm.size(); i += 4) std::swap(pm[i], pm[i + 2]);
         std::vector<uint8_t> bottomUp(pm.size());
         const size_t row = (size_t)w * 4;
         for (uint32_t y = 0; y < h; ++y)
@@ -271,7 +277,7 @@ struct CudaTransport : Transport {
             return nullptr;
         }
         std::string err;
-        auto img = be->updateImageSlotCUDA(slot, w, h, s.arr, err);
+        auto img = be->updateImageSlotCUDA(slot, w, h, s.arr, bgra, err);
         if (!img) std::printf("  updateImageSlotCUDA: %s\n", err.c_str());
         return img.get();
     }
