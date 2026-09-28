@@ -111,11 +111,12 @@ public:
     virtual void ensureCudaStream() {}
 
     // Same contract as updateImageSlot, but the source pixels come from a
-    // cudaArray* (RGBA8, as handed out by TouchDesigner in CUDA execute mode).
-    // Must be called between OP_Context::beginCUDAOperations/end.
+    // cudaArray* of 8-bit 4-channel pixels as handed out by TouchDesigner in
+    // CUDA execute mode - BGRA order when 'bgra' (TD's usual 8-bit layout),
+    // else RGBA. Must be called between OP_Context::beginCUDAOperations/end.
     virtual rive::rcp<rive::RenderImage> updateImageSlotCUDA(
         int /*slot*/, uint32_t /*width*/, uint32_t /*height*/,
-        void* /*cudaArray*/, std::string& err)
+        void* /*cudaArray*/, bool /*bgra*/, std::string& err)
     {
         err = "CUDA interop is not available on this backend.";
         return nullptr;

@@ -223,7 +223,7 @@ Transport:
 
 - **Windows + NVIDIA (default there)**: the plugin registers in CUDA
   execute mode, where textures move GPU→GPU in both directions with **zero
-  CPU copies**. Input TOPs must be RGBA 8-bit. The mode applies to every
+  CPU copies**. Input TOPs must be 8-bit (the default). The mode applies to every
   Rive TOP in the process. To opt out, set the environment variable
   `TDRIVE_CUDA=0` before launching TouchDesigner. The Info CHOP's
   `cuda_mode` channel shows which mode loaded.

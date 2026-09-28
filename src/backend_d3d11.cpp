@@ -41,9 +41,8 @@ public:
     explicit D3D11Backend(bool cudaMode) : mCUDAMode(cudaMode)
     {
         // BGRA8 matches TouchDesigner's BGRA8Fixed CPU upload without a
-        // swizzle. In CUDA mode we use RGBA8 instead: it's in CUDA's
-        // documented set of interop-safe formats (BGRA8 is not) and is also
-        // unconditionally UAV-compatible.
+        // swizzle. In CUDA mode we use RGBA8 to match the RGBA8Fixed output
+        // array we request, and because it is unconditionally UAV-compatible.
         mTargetFormat = cudaMode ? DXGI_FORMAT_R8G8B8A8_UNORM
                                  : DXGI_FORMAT_B8G8R8A8_UNORM;
     }
@@ -384,7 +383,8 @@ public:
         int slot, uint32_t w, uint32_t h,
         const uint8_t* rgba, std::string& err) override
     {
-        if (!ensureSlotTexture(slot, w, h, err)) return nullptr;
+        if (!ensureSlotTexture(slot, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, err))
+            return nullptr;
         Slot& s = mSlots[slot];
         mContext->UpdateSubresource(s.tex.Get(), 0, nullptr,
                                     rgba, w * 4, 0);
@@ -393,11 +393,16 @@ public:
 
     rive::rcp<rive::RenderImage> updateImageSlotCUDA(
         int slot, uint32_t w, uint32_t h,
-        void* srcCudaArray, std::string& err) override
+        void* srcCudaArray, bool bgra, std::string& err) override
     {
         const auto* api = cuda::Get();
         if (!mCUDAMode || !api) { err = "CUDA interop inactive."; return nullptr; }
-        if (!ensureSlotTexture(slot, w, h, err)) return nullptr;
+        // The slot texture takes the input's channel order, so the raw bytes
+        // CUDA copies in are already right and Rive's view of the texture
+        // does the swizzle. BGRA8 is a CUDA D3D11-interop format.
+        const DXGI_FORMAT fmt = bgra ? DXGI_FORMAT_B8G8R8A8_UNORM
+                                     : DXGI_FORMAT_R8G8B8A8_UNORM;
+        if (!ensureSlotTexture(slot, w, h, fmt, err)) return nullptr;
         Slot& s = mSlots[slot];
 
         // TouchDesigner's cudaArray starts at the bottom row and Rive samples
@@ -463,6 +468,7 @@ private:
         ComPtr<ID3D11Texture2D>       landing;
         rive::rcp<rive::RenderImage>  img;
         uint32_t                      w = 0, h = 0;
+        DXGI_FORMAT                   fmt = DXGI_FORMAT_UNKNOWN;
         cudaGraphicsResource_t        cudaRes = nullptr;
     };
 
@@ -512,12 +518,13 @@ private:
         }
     }
 
-    bool ensureSlotTexture(int slot, uint32_t w, uint32_t h, std::string& err)
+    bool ensureSlotTexture(int slot, uint32_t w, uint32_t h, DXGI_FORMAT fmt,
+                           std::string& err)
     {
         if (slot < 0 || slot >= kMaxImageSlots) { err = "Bad image slot."; return false; }
         if (w == 0 || h == 0) { err = "Image input has zero size."; return false; }
         Slot& s = mSlots[slot];
-        if (s.tex && s.w == w && s.h == h && s.img) return true;
+        if (s.tex && s.w == w && s.h == h && s.fmt == fmt && s.img) return true;
 
         releaseSlot(s);
 
@@ -526,7 +533,7 @@ private:
         d.Height           = h;
         d.MipLevels        = 1;
         d.ArraySize        = 1;
-        d.Format           = DXGI_FORMAT_R8G8B8A8_UNORM;
+        d.Format           = fmt;
         d.SampleDesc.Count = 1;
         d.Usage            = D3D11_USAGE_DEFAULT;
         d.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
@@ -546,6 +553,7 @@ private:
         s.img = rive::make_rcp<rive::RiveRenderImage>(std::move(riveTex));
         s.w = w;
         s.h = h;
+        s.fmt = fmt;
         return true;
     }
 
@@ -560,6 +568,7 @@ private:
         s.landing.Reset();
         s.tex.Reset();
         s.w = s.h = 0;
+        s.fmt = DXGI_FORMAT_UNKNOWN;
     }
 
     // RGBA8 array -> array on mStream. Extent is in elements for arrays.

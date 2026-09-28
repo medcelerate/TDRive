@@ -1312,6 +1312,7 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
         struct SlotAcq {
             const OP_CUDAArrayInfo* info = nullptr;
             const char*             prop = nullptr;
+            bool                    bgra = false;
         };
         SlotAcq acq[tdrive::kMaxImageSlots];
         // Declared on every array TD hands us, so TD orders its Vulkan work
@@ -1325,15 +1326,26 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
                 std::snprintf(parName, sizeof(parName), "Imageprop%d", slot + 1);
                 const char* prop = inputs->getParString(parName);
                 if (!top || !prop || !*prop) continue;
-                if (top->textureDesc.pixelFormat != OP_PixelFormat::RGBA8Fixed) {
-                    setError("Image inputs must be RGBA8 (8-bit fixed) in "
-                             "CUDA mode.");
+                // TD hands 8-bit TOPs over as BGRA8Fixed (the SDK's preferred
+                // 8-bit layout) even when their Pixel Format reads RGBA, so
+                // accept every 4-byte 8-bit layout. Anything else skips just
+                // this slot; a node error would blank the whole output.
+                const OP_PixelFormat pf = top->textureDesc.pixelFormat;
+                const bool bgra = pf == OP_PixelFormat::BGRA8Fixed ||
+                                  pf == OP_PixelFormat::SBGRA8Fixed;
+                if (!bgra && pf != OP_PixelFormat::RGBA8Fixed) {
+                    addWarning("Image " + std::to_string(slot + 1) +
+                               " TOP has pixel format " +
+                               std::to_string((int)pf) + "; CUDA mode injects "
+                               "8-bit 4-channel TOPs only. Set its Pixel "
+                               "Format to 8-bit fixed (RGBA).");
                     continue;
                 }
                 OP_CUDAAcquireInfo acquire;
                 acquire.stream = stream;
                 acq[slot].info = top->getCUDAArray(acquire, nullptr);
                 acq[slot].prop = prop;
+                acq[slot].bgra = bgra;
             }
         }
 
@@ -1390,11 +1402,11 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
             fd.renderTargetHeight = (uint32_t)resH;
         }
         if (resW != reqW || resH != reqH) {
-            mWarning = "TouchDesigner limited this TOP to " +
+            addWarning("TouchDesigner limited this TOP to " +
                        std::to_string(resW) + "x" + std::to_string(resH) +
                        " (requested " + std::to_string(reqW) + "x" +
                        std::to_string(reqH) + "), e.g. the Non-Commercial "
-                       "1280x1280 cap. Rendering at the limited size.";
+                       "1280x1280 cap. Rendering at the limited size.");
         }
         mOutW = resW;
         mOutH = resH;
@@ -1406,9 +1418,10 @@ void TDRiveTOP::execute(TOP_Output* output, const OP_Inputs* inputs, void*)
             std::string ierr;
             auto img = mBackend->updateImageSlotCUDA(
                 slot, desc.width, desc.height,
-                acq[slot].info->cudaArray, ierr);
+                acq[slot].info->cudaArray, acq[slot].bgra, ierr);
             if (img) bindSlotImage(slot, acq[slot].prop, img.get());
-            else if (!ierr.empty()) setError(ierr);
+            else if (!ierr.empty())
+                addWarning("Image " + std::to_string(slot + 1) + ": " + ierr);
         }
         mCudaInjectMs = msSince(ti);
 

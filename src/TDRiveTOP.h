@@ -160,4 +160,9 @@ private:
 
     std::string mError;
     std::string mWarning;   // cleared every cook
+    void addWarning(const std::string& s)
+    {
+        if (!mWarning.empty()) mWarning += "\n";
+        mWarning += s;
+    }
 };
