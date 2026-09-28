@@ -367,7 +367,7 @@ struct Scene {
     }
 };
 
-bool near(RGBA a, RGBA b, int tol)
+bool closeTo(RGBA a, RGBA b, int tol)
 {
     return std::abs(a.r - b.r) <= tol && std::abs(a.g - b.g) <= tol
         && std::abs(a.b - b.b) <= tol;
@@ -383,7 +383,7 @@ std::string fmt(RGBA c)
 void expectPixel(const Scene& s, int x, int y, RGBA want, int tol, const std::string& what)
 {
     RGBA got = s.at(x, y);
-    check(near(got, want, tol),
+    check(closeTo(got, want, tol),
           what + " @" + std::to_string(x) + "," + std::to_string(y)
           + " want " + fmt(want) + " got " + fmt(got));
 }
@@ -532,7 +532,7 @@ void testTransform(Transport& t, rive::File* file)
     // spinClip: 540x540 circle at left 190, top 270 -> centre (460, 540).
     const int px = 460 + 130, py = 540 - 130;  // upper-right of centre, inside circle
     RGBA t0 = s.at(px, py);
-    check(near(t0, TR, 2), "spin t=0 upper-right shows TR quadrant, got " + fmt(t0));
+    check(closeTo(t0, TR, 2), "spin t=0 upper-right shows TR quadrant, got " + fmt(t0));
     expectPixel(s, 190 + 20, 270 + 20, { 0x18, 0x18, 0x30, 255 }, 2,
                 "circle clip hides image corner");
     expectPixel(s, 1300, 525, { 0, 200, 255, 255 }, 2, "videoIn2 in slide panel");
@@ -540,7 +540,7 @@ void testTransform(Transport& t, rive::File* file)
     // spinLoop is 360 degrees over 4 s: after 1 s the quadrant has moved on.
     if (!s.settle(1.0f)) { check(false, "render t=1s"); return; }
     RGBA t1 = s.at(px, py);
-    check(!near(t1, TR, 8) && (near(t1, TL, 8) || near(t1, BR, 8)),
+    check(!closeTo(t1, TR, 8) && (closeTo(t1, TL, 8) || closeTo(t1, BR, 8)),
           "spin t=1s upper-right rotated to a neighbouring quadrant, got " + fmt(t1));
 }
 
