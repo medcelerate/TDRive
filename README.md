@@ -112,6 +112,7 @@ operators palette.
 | Alignment      | 3×3 anchor.                                                      |
 | Speed          | Playback speed multiplier.                                       |
 | Background Color | RGBA clear color. Set alpha = 0 for transparent output.        |
+| Skip Idle Frames | On (default): render only when the artboard can have changed, otherwise hold the last frame. Off: render every cook. |
 
 Output size comes from the TOP's built-in **Common** page (Output
 Resolution / Resolution). "Use Input" means the artboard's own authored size.

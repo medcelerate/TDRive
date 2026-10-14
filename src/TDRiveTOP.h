@@ -140,6 +140,36 @@ private:
     std::chrono::steady_clock::time_point mLastTick;
     bool mHasTick = false;
 
+    // Skip Idle Frames (see execute()). Everything outside Rive that changes
+    // what a render would produce; a difference from the last cook forces a
+    // render, the same as the scene reporting a change.
+    struct RenderKey {
+        int32_t     w = -1, h = -1, fit = -1, align = -1;
+        double      bg[4] = {-1.0, -1.0, -1.0, -1.0};
+        const void* artboard = nullptr;
+        const void* scene    = nullptr;
+        bool        loaded   = false;
+        bool sameAs(const RenderKey& o) const
+        {
+            return w == o.w && h == o.h && fit == o.fit && align == o.align &&
+                   bg[0] == o.bg[0] && bg[1] == o.bg[1] && bg[2] == o.bg[2] &&
+                   bg[3] == o.bg[3] && artboard == o.artboard && scene == o.scene &&
+                   loaded == o.loaded;
+        }
+    };
+    RenderKey mLastRenderKey;
+    // absFrame of the last execute(), for spotting cooks TouchDesigner skipped.
+    int64_t mLastCookFrame = -1;
+    // Cooks still to render. A change sets it to 2, not 1: the CPU readback
+    // hands TouchDesigner the PREVIOUS cook's frame (double-buffered staging),
+    // so the cook after the last change has to render once more to deliver it.
+    int  mRenderFramesLeft = 2;
+    // Set by the CHOP/DAT/texture input paths whenever they push a new value
+    // into Rive; cleared once per cook.
+    bool mInputsChanged = false;
+    // Whether the last cook rendered (Info CHOP 'rendered').
+    bool mRendered = false;
+
     // Edge detection
     std::unordered_map<std::string, float>       mPrevChopValues;
     std::unordered_map<std::string, std::string> mPrevDatValues;
