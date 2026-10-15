@@ -6,6 +6,28 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+  # Called by weekly.yml to build on the self-hosted GPU runners, run the
+  # end-to-end texture tests there, and publish a release from those exact
+  # artifacts. Push and pull_request runs get none of these inputs, so they
+  # fall back to the hosted runners and skip the GPU tests.
+  workflow_call:
+    inputs:
+      mac_runner:
+        description: JSON runs-on value for the macOS job
+        type: string
+        default: '"macos-14"'
+      win_runner:
+        description: JSON runs-on value for the Windows job
+        type: string
+        default: '"windows-2022"'
+      e2e:
+        description: Run tests/texture_io end to end (needs a real GPU; CUDA on Windows)
+        type: boolean
+        default: false
+      release_tag:
+        description: Publish a release with this tag from this run's artifacts
+        type: string
+        default: ''
 
 # Pin the Rive runtime to a specific release tag so CI builds are reproducible
 # and match the runtime the plugin has been tested against. Bump this to a newer
@@ -22,7 +44,7 @@ concurrency:
 jobs:
   # ---------------------------------------------------------------------------
   macos:
-    runs-on: macos-14   # arm64
+    runs-on: ${{ fromJSON(inputs.mac_runner || '"macos-14"') }}   # arm64
     steps:
       - uses: actions/checkout@v5
         with:
@@ -100,6 +122,13 @@ jobs:
         # Runs before packaging so a bad binary never becomes a zip.
         run: python3 scripts/verify_python_endpoint.py build/TDRiveTOP.plugin/Contents/MacOS/TDRiveTOP
 
+      - name: End-to-end texture test (Metal)
+        # Renders tests/texture_io/texture_io.riv with injected textures and
+        # checks orientation, slot routing and alpha. Needs a real GPU, so it
+        # only runs when weekly.yml calls this on the self-hosted Mac.
+        if: inputs.e2e
+        run: ./build/texture_io_test tests/texture_io/texture_io.riv cpu
+
       - name: Package macOS plugin
         # Bake the pinned Rive tag into the zip name so downloaders can see
         # at a glance which runtime the plugin was built against.
@@ -121,8 +150,8 @@ jobs:
     # to VS 2026 (v18) and dropped VS 2022, which breaks the hardcoded
     # "Visual Studio 17 2022" CMake generator below ("could not find any
     # instance of Visual Studio"). Pinning mirrors the macos-14 pin and keeps
-    # release builds reproducible.
-    runs-on: windows-2022
+    # release builds reproducible. A self-hosted runner needs VS 2022 too.
+    runs-on: ${{ fromJSON(inputs.win_runner || '"windows-2022"') }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -259,6 +288,27 @@ jobs:
         shell: pwsh
         run: python scripts/verify_python_endpoint.py build\Release\TDRiveTOP.dll
 
+      - name: End-to-end texture test (D3D11)
+        if: inputs.e2e
+        shell: pwsh
+        run: |
+          build\Release\texture_io_test.exe tests\texture_io\texture_io.riv cpu
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: End-to-end texture test (CUDA)
+        # Asked for explicitly, so a machine without CUDA fails (exit 2)
+        # instead of skipping. cudart has to be findable: set the repo
+        # variable TDRIVE_CUDART_DIR to a folder holding cudart64_*.dll
+        # (TouchDesigner's bin folder works) unless a CUDA toolkit is on PATH.
+        if: inputs.e2e
+        shell: pwsh
+        env:
+          TDRIVE_CUDART_DIR: ${{ vars.TDRIVE_CUDART_DIR }}
+        run: |
+          if ($env:TDRIVE_CUDART_DIR) { $env:PATH = "$env:TDRIVE_CUDART_DIR;$env:PATH" }
+          build\Release\texture_io_test.exe tests\texture_io\texture_io.riv cuda
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Package Windows plugin
         # Bake the pinned Rive tag into the zip name so downloaders can see
         # at a glance which runtime the plugin was built against.
@@ -277,9 +327,11 @@ jobs:
 
   # ---------------------------------------------------------------------------
   release:
-    # Runs only on a v*.*.* tag (e.g. v0.1.0, v1.2.3). Builds both platforms
-    # first via 'needs:', then attaches the prepared zips to a GitHub Release.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Runs on a pushed v*.*.* tag (e.g. v0.1.0, v1.2.3), or when weekly.yml
+    # passes release_tag - then the tag is created here, at the tested commit.
+    # Builds both platforms first via 'needs:', then attaches the prepared
+    # zips to a GitHub Release.
+    if: startsWith(github.ref, 'refs/tags/v') || (inputs.release_tag || '') != ''
     needs: [macos, windows]
     runs-on: ubuntu-latest
     permissions:
@@ -303,6 +355,8 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           files: |
             release/TDRive_mac_rive-*.zip
             release/TDRive_win_rive-*.zip
@@ -315,4 +369,4 @@ jobs:
             Built against [rive-app/rive-runtime@${{ env.RIVE_REF }}](https://github.com/rive-app/rive-runtime/releases/tag/${{ env.RIVE_REF }}).
           # Tags with a semver pre-release suffix (v1.1.0-ea, v2.0.0-rc1, ...)
           # publish as GitHub prereleases instead of full releases.
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(inputs.release_tag || github.ref_name, '-') }}

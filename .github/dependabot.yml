@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # Keep the workflows' actions current; the weekly review reads these PRs too.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

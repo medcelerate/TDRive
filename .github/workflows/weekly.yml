@@ -1,0 +1,156 @@
+name: Weekly
+
+# Once a week:
+#   1. review open PRs that have new activity, and post the review as a comment
+#   2. if main has merged changes since the last release and no open
+#      high/critical code-scanning alerts, build on the self-hosted GPU
+#      runners, run the end-to-end tests, and publish the next release from
+#      those exact artifacts
+#
+# Trust boundaries (this repository is public and takes fork PRs):
+#   - The review agent runs on a GitHub-hosted runner, with a read-only token,
+#     no shell/web/GitHub tools, and main checked out - never the PR's code.
+#     Everything it reads was fetched for it by select_prs.py.
+#   - Posting happens in a separate job that holds the write token but not
+#     the Claude credential, and can only add plain comments.
+#   - The self-hosted runners only ever run main, from this scheduled or
+#     manually dispatched workflow - never pull_request code.
+
+on:
+  schedule:
+    - cron: "0 15 * * 1"   # Mondays 15:00 UTC, three hours after CodeQL
+  workflow_dispatch:
+    inputs:
+      review:
+        description: Review open PRs with new activity
+        type: boolean
+        default: true
+      release:
+        description: Test and release main if it has unreleased merges
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: weekly
+  cancel-in-progress: false
+
+jobs:
+  select-prs:
+    if: github.event_name == 'schedule' || inputs.review
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      count: ${{ steps.select.outputs.count }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Select PRs and gather their context
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/select_prs.py pr-context
+      - uses: actions/upload-artifact@v7
+        if: steps.select.outputs.count != '0'
+        with:
+          name: pr-context
+          path: pr-context
+          retention-days: 7
+
+  review:
+    needs: select-prs
+    if: needs.select-prs.outputs.count != '0'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7   # main, never the PR head
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: pr-context
+          path: pr-context
+      - run: mkdir -p reviews
+      - name: Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: |
+            Follow the instructions in .github/claude/weekly-review.md.
+            Repository: ${{ github.repository }}.
+          claude_args: |
+            --max-turns 80
+            --allowedTools Read,Glob,Grep,Write
+            --disallowedTools Bash,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch
+      - uses: actions/upload-artifact@v7
+        with:
+          name: reviews
+          path: reviews
+          if-no-files-found: warn
+          retention-days: 7
+
+  post-reviews:
+    needs: [select-prs, review]
+    if: needs.review.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7   # for the script only
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: pr-context
+          path: pr-context
+      - uses: actions/download-artifact@v8
+        continue-on-error: true   # absent when the agent wrote nothing
+        with:
+          name: reviews
+          path: reviews
+      - name: Post reviews
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/post_reviews.py pr-context reviews
+
+  plan-release:
+    if: github.event_name == 'schedule' || inputs.release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      security-events: read
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Plan release
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/plan_release.py
+
+  test-and-release:
+    needs: plan-release
+    if: needs.plan-release.outputs.release == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build.yml
+    with:
+      mac_runner: '["self-hosted", "macOS", "tdrive-metal"]'
+      win_runner: '["self-hosted", "Windows", "tdrive-cuda"]'
+      e2e: true
+      release_tag: ${{ needs.plan-release.outputs.tag }}
